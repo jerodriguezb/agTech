@@ -1,0 +1,245 @@
+// ============================================================================
+// agroCopilot.ag — Ontología del Dominio Agrícola
+// Modelo de datos fundacional para gestión agropecuaria geoespacial
+// ============================================================================
+
+/** Alias de tipo para cadenas en formato ISO 8601 */
+export type ISOString = string;
+
+/** Alias de tipo para identificadores únicos */
+export type ID = string;
+
+/** Categorías de insumos agropecuarios */
+export type InputCategory = 'Agricola' | 'Ganadero' | 'Estructura' | 'Semilla' | 'Fertilizante' | 'Agroquimico' | 'Combustible' | 'Otro';
+
+/** Tipos de actividades de campo registrables */
+export type ActivityType =
+  | 'Siembra'
+  | 'Cosecha'
+  | 'Pulverizacion'
+  | 'Fertilizacion'
+  | 'Riego'
+  | 'Lluvia';
+
+/** Vistas navegables de la aplicación */
+export type AppView = 'dashboard' | 'map' | 'tasks' | 'inventory';
+
+// ============================================================================
+// Entidades de Negocio
+// ============================================================================
+
+/**
+ * Farm — Establecimiento agropecuario.
+ * Representa la identidad y dimensiones generales del campo.
+ */
+export interface Farm {
+  id: ID;
+  name: string;
+  totalArea: number; // hectáreas
+  location: string;
+  owner: string;
+  createdAt: ISOString;
+}
+
+/**
+ * Coordenadas GeoJSON para geometrías de lotes.
+ * Soporta Polygon y MultiPolygon conforme al estándar RFC 7946.
+ */
+export type PaddockGeometry =
+  | {
+      type: 'Polygon';
+      coordinates: number[][][];
+    }
+  | {
+      type: 'MultiPolygon';
+      coordinates: number[][][][];
+    };
+
+/**
+ * Paddock (Lote) — Unidad de manejo agronómico georreferenciada.
+ * Contiene la geometría espacial, estado fenológico (NDVI) y relación con cultivo.
+ */
+export interface Paddock {
+  id: ID;
+  farmId: ID;
+  name: string;
+  area: number; // hectáreas
+  cropId: ID | null;
+  ndvi: number; // Índice de Vegetación de Diferencia Normalizada [-1.0, 1.0]
+  coordinates: PaddockGeometry;
+  soilType?: string;
+  lastUpdated: ISOString;
+}
+
+/**
+ * Crop — Cultivo asignado a un lote.
+ * Incluye atributos descriptivos y color para visualización en mapas.
+ */
+export interface Crop {
+  id: ID;
+  name: string;
+  variety: string;
+  color: string; // HEX color para renderizado cartográfico (ej. "#2E7D32")
+  plantingDate: ISOString | null;
+  expectedHarvestDate: ISOString | null;
+  cycleLength: number; // días
+}
+
+/**
+ * InventoryItem — Registro de bienes/insumos en pañol.
+ * Soporta control de stock mínimo para alertas.
+ */
+export interface InventoryItem {
+  id: ID;
+  name: string;
+  category: InputCategory;
+  currentStock: number;
+  unit: string; // unidad métrica (litros, kg, unidades, bolsas)
+  minimumStock: number;
+  unitCost: number; // costo unitario en USD
+  lastRestocked: ISOString;
+}
+
+/**
+ * StaffMember — Operario o personal del establecimiento.
+ */
+export interface StaffMember {
+  id: ID;
+  farmId: ID;
+  firstName: string;
+  lastName: string;
+  role: string;
+  phone?: string;
+}
+
+/**
+ * FarmActivityType — Tipo de actividad paramétrico por campo.
+ */
+export interface FarmActivityType {
+  id: ID;
+  farmId: ID;
+  name: string;
+  color: string;
+  icon: string;
+}
+
+/**
+ * ActivityInput — Insumo consumido en una actividad de campo.
+ * Referencia relacional al ítem de inventario y cantidad utilizada.
+ */
+export interface ActivityInput {
+  inventoryItemId: ID;
+  quantity: number;
+  unit: string;
+}
+
+/**
+ * Activity — Registro transaccional del libro mayor de operaciones.
+ * Contiene metadatos, responsable, insumos consumidos y notas.
+ */
+export interface Activity {
+  id: ID;
+  farmId: ID;
+  paddockId: ID | null;
+  activityTypeId?: ID | null;
+  type: string; // Nombre resuelto o legacy
+  color?: string; // Hex color resuelto
+  icon?: string; // Nombre del ícono resuelto
+  date: ISOString;
+  staffId?: ID | null;
+  responsible: string; // Nombre resuelto o legacy
+  inputsConsumed: ActivityInput[];
+  notes: string;
+  rainfallMm?: number; // solo para tipo 'Lluvia'
+  createdAt: ISOString;
+}
+
+// ============================================================================
+// Mensajería del Copiloto
+// ============================================================================
+
+/** Mensaje en el canal conversacional del copiloto IA */
+export interface ChatMessage {
+  id: ID;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: ISOString;
+  isProcessing?: boolean;
+}
+
+// ============================================================================
+// Interfaz del Store Global
+// ============================================================================
+
+export interface AgriState {
+  // Datos del dominio
+  farms: Farm[];
+  paddocks: Paddock[];
+  crops: Crop[];
+  inventory: InventoryItem[];
+  activities: Activity[];
+  staff: StaffMember[];
+  activityTypes: FarmActivityType[];
+
+  // Estado de UI y Carga
+  currentFarmId: ID;
+  currentView: AppView;
+  isSidebarCollapsed: boolean;
+  isCopilotOpen: boolean;
+  isLoading: boolean;
+  isAuthModalOpen: boolean;
+  supabaseStatus: 'disconnected' | 'connected' | 'simulated';
+  user: any | null; // Guardará el objeto User de Supabase o null
+
+  // Chat del copiloto
+  chatMessages: ChatMessage[];
+}
+
+export interface AgriActions {
+  // Inicialización y Auth
+  loadInitialData: () => Promise<void>;
+  signIn: (email: string, password: string) => Promise<{ error: any }>;
+  signUp: (email: string, password: string) => Promise<{ error: any }>;
+  signOut: () => Promise<void>;
+  setUser: (user: any | null) => void;
+  setAuthModalOpen: (isOpen: boolean) => void;
+
+  // Modificadores de UI
+  setCurrentFarm: (id: ID) => void;
+  setCurrentView: (view: AppView) => void;
+  toggleSidebar: () => void;
+  toggleCopilot: () => void;
+
+  // Lotes (Paddocks)
+  addPaddock: (paddockData: Omit<Paddock, 'id' | 'area' | 'lastUpdated'>) => Promise<void>;
+  updatePaddock: (id: ID, updates: Partial<Paddock>) => Promise<void>;
+  deletePaddock: (id: ID) => Promise<void>;
+  updatePaddockNDVI: (paddockId: ID, newNdvi: number) => Promise<void>;
+
+  // Pañol (Inventory)
+  addInventoryItem: (item: Omit<InventoryItem, 'id' | 'lastRestocked'>) => Promise<void>;
+  updateInventoryItem: (id: ID, updates: Partial<InventoryItem>) => Promise<void>;
+  deleteInventoryItem: (id: ID) => Promise<void>;
+  updateInventoryStock: (itemId: ID, quantityDelta: number) => Promise<void>;
+
+  // Personal (Staff)
+  addStaff: (staff: Omit<StaffMember, 'id' | 'farmId'>) => Promise<void>;
+  updateStaff: (id: ID, staff: Partial<StaffMember>) => Promise<void>;
+  deleteStaff: (id: ID) => Promise<void>;
+
+  // Tipos de Actividad (Activity Types)
+  addActivityType: (type: Omit<FarmActivityType, 'id' | 'farmId'>) => Promise<void>;
+  updateActivityType: (id: ID, type: Partial<FarmActivityType>) => Promise<void>;
+  deleteActivityType: (id: ID) => Promise<void>;
+
+  // Historial de Actividades (Activities)
+  addActivity: (activity: Omit<Activity, 'id' | 'createdAt'>) => Promise<void>;
+  deleteActivity: (id: ID) => Promise<void>;
+
+  // Chat
+  addChatMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => Promise<void>;
+  setMessageProcessing: (messageId: ID, isProcessing: boolean) => void;
+}
+
+export type AgriStore = AgriState & AgriActions;
+

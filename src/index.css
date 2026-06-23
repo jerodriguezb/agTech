@@ -1,0 +1,163 @@
+@import 'leaflet/dist/leaflet.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   agroCopilot.ag — Global Styles
+   ============================================================================ */
+
+/* ─── Smooth Scrolling ─────────────────────────────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+}
+
+/* ─── Body Defaults ────────────────────────────────────────────────────────── */
+body {
+  @apply bg-slate-50 text-slate-900 font-sans antialiased;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Custom Scrollbar (Webkit) ────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 rounded-full;
+  transition: background-color 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400;
+}
+
+/* Dark-themed scrollbar for sidebar and dark containers */
+.dark-scrollbar::-webkit-scrollbar-track {
+  @apply bg-slate-800/50;
+}
+
+.dark-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-slate-600 rounded-full;
+}
+
+.dark-scrollbar::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-500;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: theme('colors.slate.300') transparent;
+}
+
+.dark-scrollbar {
+  scrollbar-color: theme('colors.slate.600') theme('colors.slate.800');
+}
+
+/* ─── Glassmorphism Utility ────────────────────────────────────────────────── */
+@layer utilities {
+  .glass {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+  }
+
+  .glass-dark {
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(51, 65, 85, 0.4);
+  }
+}
+
+/* ─── Chat Bubble Animations ──────────────────────────────────────────────── */
+@keyframes chatBubbleIn {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.95);
+  }
+  60% {
+    transform: translateY(-2px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes chatBubbleInLeft {
+  0% {
+    opacity: 0;
+    transform: translateX(-10px) translateY(8px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) translateY(0) scale(1);
+  }
+}
+
+@keyframes chatBubbleInRight {
+  0% {
+    opacity: 0;
+    transform: translateX(10px) translateY(8px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) translateY(0) scale(1);
+  }
+}
+
+@keyframes typingDot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+
+.chat-bubble-in {
+  animation: chatBubbleIn 0.35s ease-out both;
+}
+
+.chat-bubble-in-left {
+  animation: chatBubbleInLeft 0.3s ease-out both;
+}
+
+.chat-bubble-in-right {
+  animation: chatBubbleInRight 0.3s ease-out both;
+}
+
+.typing-dot {
+  animation: typingDot 1.4s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* ─── Leaflet Overrides ────────────────────────────────────────────────────── */
+.leaflet-container {
+  @apply rounded-xl font-sans;
+}
+
+.leaflet-control-attribution {
+  @apply text-xs opacity-60;
+}
