@@ -6,6 +6,12 @@ import {
   ResponsiveContainer,
   Tooltip,
   Legend,
+  ComposedChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid
 } from 'recharts';
 import {
   Sprout,
@@ -216,6 +222,33 @@ export default function DashboardView() {
         paddockName: a.paddockId ? paddockMap.get(a.paddockId)?.name ?? '—' : 'General',
       }));
   }, [activities, paddocks]);
+
+  // ── Temporal Data for Chart ─────────────────────────────────────────────
+  const monthlyStats = useMemo(() => {
+    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const currentYear = new Date().getFullYear();
+    
+    // Initialize data array
+    const data = months.map(m => ({ month: m, lluvia: 0, labores: 0 }));
+
+    activities.forEach(a => {
+      const d = new Date(a.date);
+      if (d.getFullYear() === currentYear) {
+        const mIdx = d.getMonth();
+        const monthData = data[mIdx];
+        if (monthData) {
+          if (a.type === 'Lluvia') {
+            monthData.lluvia += (a.rainfallMm || 0);
+          } else {
+            // Count as labor
+            monthData.labores += 1;
+          }
+        }
+      }
+    });
+
+    return data;
+  }, [activities]);
 
   // ── KPI card definitions ────────────────────────────────────────────────
   const kpis = [
@@ -435,7 +468,7 @@ export default function DashboardView() {
                     <span
                       className={cn(
                         'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium',
-                        activityBadge[a.type],
+                        activityBadge[a.type] || 'bg-gray-100 text-gray-700'
                       )}
                     >
                       {a.type === 'Lluvia' && <Droplets className="h-3 w-3" />}
@@ -451,6 +484,30 @@ export default function DashboardView() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* ─ Temporal Comparison Chart ───────────────────────────────── */}
+      <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-black/5">
+        <h2 className="mb-4 text-lg font-semibold text-gray-800">
+          Relación Precipitaciones vs. Actividad (Anual)
+        </h2>
+        <div className="h-80 w-full mt-4">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={monthlyStats} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+              <CartesianGrid stroke="#f5f5f5" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="month" scale="band" axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 12 }} dy={10} />
+              <YAxis yAxisId="left" orientation="left" axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 12 }} dx={-10} label={{ value: 'Lluvia (mm)', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: '#6b7280', fontSize: 12 } }} />
+              <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 12 }} dx={10} label={{ value: 'Labores (cant)', angle: -90, position: 'insideRight', style: { textAnchor: 'middle', fill: '#6b7280', fontSize: 12 } }} />
+              <Tooltip 
+                contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)' }}
+                cursor={{ fill: 'rgba(226, 232, 240, 0.4)' }}
+              />
+              <Legend verticalAlign="top" height={36} />
+              <Bar yAxisId="left" dataKey="lluvia" name="Lluvia (mm)" barSize={20} fill="#38bdf8" radius={[4, 4, 0, 0]} />
+              <Line yAxisId="right" type="monotone" dataKey="labores" name="Labores (cant)" stroke="#10b981" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
       </div>
 

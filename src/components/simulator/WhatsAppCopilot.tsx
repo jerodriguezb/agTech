@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { X, SendHorizontal, Leaf } from 'lucide-react';
+import { X, SendHorizontal, Leaf, Camera, Mic, Paperclip, Check, Trash2 } from 'lucide-react';
 import { useAgriStore } from '../../store/useAgriStore';
 import { cn, formatCurrency, formatNumber } from '../../lib/utils';
+import { processNaturalLanguage } from '../../lib/nlpEngine';
+import type { PendingActivity } from '../../types';
 
 // ─── Typing Indicator ─────────────────────────────────────────────────────────
 
@@ -46,6 +48,10 @@ export default function WhatsAppCopilot() {
   const addChatMessage = useAgriStore((s) => s.addChatMessage);
   const addActivity = useAgriStore((s) => s.addActivity);
   const updatePaddockNDVI = useAgriStore((s) => s.updatePaddockNDVI);
+  const user = useAgriStore((s) => s.user);
+  const setAuthModalOpen = useAgriStore((s) => s.setAuthModalOpen);
+  const partialAction = useAgriStore((s) => s.partialAction);
+  const setPartialAction = useAgriStore((s) => s.setPartialAction);
 
   const [inputValue, setInputValue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -64,23 +70,68 @@ export default function WhatsAppCopilot() {
     }
   }, [isCopilotOpen]);
 
+  // Handle confirmation of a pending activity
+  const confirmPendingAction = useCallback((messageId: string, action: PendingActivity) => {
+    // Check if user is logged in
+    if (!user) {
+      addChatMessage({ 
+        role: 'assistant', 
+        content: '⚠️ Debes iniciar sesión en el sistema para registrar labores y cambios de NDVI. Por favor, ingresa a tu cuenta y vuelve a confirmar la actividad.',
+        showLoginButton: true
+      });
+      setAuthModalOpen(true);
+      return;
+    }
+
+    // Optimistically update message to remove pending action
+    const messages = useAgriStore.getState().chatMessages;
+    useAgriStore.setState({
+      chatMessages: messages.map(m => m.id === messageId ? { ...m, pendingAction: undefined } : m)
+    });
+
+    // Clear any partial action conversational states
+    setPartialAction(null);
+
+    const responsibleName = user.user_metadata?.full_name || user.email || 'Usuario';
+
+    if (action.type === 'NDVI_UPDATE') {
+      if (action.paddockId && action.ndviValue !== undefined) {
+        updatePaddockNDVI(action.paddockId, action.ndviValue);
+        addChatMessage({ role: 'assistant', content: `✅ NDVI actualizado exitosamente por **${responsibleName}**.` });
+      }
+    } else {
+      addActivity({
+        type: action.type,
+        farmId: useAgriStore.getState().currentFarmId,
+        paddockId: action.paddockId || null,
+        date: action.date,
+        responsible: responsibleName,
+        inputsConsumed: action.inputsConsumed,
+        notes: action.notes,
+        rainfallMm: action.rainfallMm,
+        appliedArea: action.appliedArea
+      });
+      addChatMessage({ role: 'assistant', content: `✅ ${action.type} registrada exitosamente. Responsable: **${responsibleName}**.` });
+    }
+  }, [addActivity, updatePaddockNDVI, addChatMessage, user, setAuthModalOpen, setPartialAction]);
+
+  const cancelPendingAction = useCallback((messageId: string) => {
+    const messages = useAgriStore.getState().chatMessages;
+    useAgriStore.setState({
+      chatMessages: messages.map(m => m.id === messageId ? { ...m, pendingAction: undefined } : m)
+    });
+    setPartialAction(null);
+    addChatMessage({ role: 'assistant', content: 'Acción cancelada.' });
+  }, [addChatMessage, setPartialAction]);
+
   // ── NLP Engine ────────────────────────────────────────────────────────
 
-  const findPaddock = useCallback(
-    (text: string) => {
-      const normalized = text.toLowerCase();
-      return paddocks.find((p) => normalized.includes(p.name.toLowerCase()));
-    },
-    [paddocks]
-  );
-
-  const processNaturalLanguage = useCallback(
+  const processInput = useCallback(
     (input: string) => {
       // 1. Add user message
       addChatMessage({ role: 'user', content: input });
 
       // 2. Add processing placeholder
-
       addChatMessage({
         role: 'assistant',
         content: 'El asistente está procesando...',
@@ -88,99 +139,21 @@ export default function WhatsAppCopilot() {
       });
       setIsProcessing(true);
 
-      // 3. Simulate network delay (1500-2500ms)
-      const delay = 1500 + Math.random() * 1000;
+      // 3. Simulate network delay (1000-1500ms)
+      const delay = 1000 + Math.random() * 500;
 
       setTimeout(() => {
-        // Remove the processing message by replacing chatMessages
-        // We use the store's set directly via a workaround: add the real message
-        // and the store will have both — but we need to remove the processing one.
-        // Since we don't have direct access to remove, we'll use setMessageProcessing approach:
-        // Actually, the simplest approach: use the store's state to filter and add.
         const currentMessages = useAgriStore.getState().chatMessages;
-        const filtered = currentMessages.filter(
-          (m) => !(m.isProcessing === true)
-        );
+        const filtered = currentMessages.filter((m) => !(m.isProcessing === true));
+        useAgriStore.setState({ chatMessages: filtered });
 
-        // Determine the response
-        let responseContent = '';
+        const inventory = useAgriStore.getState().inventory;
+        const result = processNaturalLanguage(input, paddocks, inventory, partialAction);
 
-        // Rule 1: Lluvia — matches /llov/i AND contains a number
-        if (/llov/i.test(input) && /\d+/.test(input)) {
-          const mmMatch = input.match(/(\d+)/);
-          const mm = mmMatch?.[1] ? parseInt(mmMatch[1], 10) : 0;
-
-          addActivity({
-            type: 'Lluvia',
-            farmId: 'farm-001',
-            paddockId: null,
-            date: new Date().toISOString(),
-            responsible: 'Registro vía Copiloto',
-            rainfallMm: mm,
-            inputsConsumed: [],
-            notes: input,
-          });
-
-          responseContent = `✅ Datos procesados. Se ha registrado exitosamente un evento de precipitaciones de ${mm} mm sobre el establecimiento.`;
-        }
-        // Rule 2: Siembra
-        else if (/siembr|sembr/i.test(input)) {
-          const paddock = findPaddock(input);
-
-          addActivity({
-            type: 'Siembra',
-            farmId: 'farm-001',
-            paddockId: paddock?.id ?? null,
-            date: new Date().toISOString(),
-            responsible: 'Registro vía Copiloto',
-            inputsConsumed: [],
-            notes: input,
-          });
-
-          responseContent = paddock
-            ? `✅ Actividad de siembra registrada exitosamente en ${paddock.name}.`
-            : '✅ Actividad de siembra registrada exitosamente.';
-        }
-        // Rule 3: Pulverización
-        else if (/pulveriz|aplic|fumig/i.test(input)) {
-          const paddock = findPaddock(input);
-
-          addActivity({
-            type: 'Pulverizacion',
-            farmId: 'farm-001',
-            paddockId: paddock?.id ?? null,
-            date: new Date().toISOString(),
-            responsible: 'Registro vía Copiloto',
-            inputsConsumed: [],
-            notes: input,
-          });
-
-          responseContent =
-            '✅ Aplicación/pulverización registrada correctamente.';
-        }
-        // Rule 4: NDVI — matches /ndvi/i AND contains a decimal number
-        else if (/ndvi/i.test(input) && /\d+\.?\d*/.test(input)) {
-          const valueMatch = input.match(/(\d+\.?\d*)/);
-          const ndviValue = valueMatch?.[1] ? parseFloat(valueMatch[1]) : 0;
-          const paddock = findPaddock(input);
-
-          if (paddock) {
-            updatePaddockNDVI(paddock.id, ndviValue);
-            responseContent = `✅ NDVI actualizado a ${ndviValue} para ${paddock.name}.`;
-          } else {
-            responseContent =
-              '⚠️ No pude identificar el lote. Por favor mencioná el nombre del lote (ej: "Lote Norte").';
-          }
-        }
-        // Rule 5: Stock/Inventario
-        else if (/stock|inventario|insumo/i.test(input)) {
-          const currentInventory = useAgriStore.getState().inventory;
-          const belowMin = currentInventory.filter(
-            (item) => item.currentStock < item.minimumStock
-          );
-
+        if (result.message === 'INVENTORY_REQUEST') {
+          const belowMin = inventory.filter((item) => item.currentStock < item.minimumStock);
           let statusText = '📦 **Estado del Inventario:**\n\n';
-          currentInventory.forEach((item) => {
+          inventory.forEach((item) => {
             const isCritical = item.currentStock < item.minimumStock;
             const indicator = isCritical ? '🔴' : '🟢';
             statusText += `${indicator} ${item.name}: ${formatNumber(item.currentStock)} ${item.unit}`;
@@ -189,34 +162,29 @@ export default function WhatsAppCopilot() {
             }
             statusText += '\n';
           });
-
           if (belowMin.length > 0) {
             statusText += `\n⚠️ ${belowMin.length} item(s) por debajo del stock mínimo.`;
           } else {
             statusText += '\n✅ Todos los insumos están por encima del stock mínimo.';
           }
-
-          const totalValue = currentInventory.reduce(
-            (acc, i) => acc + i.currentStock * i.unitCost,
-            0
-          );
+          const totalValue = inventory.reduce((acc, i) => acc + i.currentStock * i.unitCost, 0);
           statusText += `\n\n💰 Valor total: ${formatCurrency(totalValue)}`;
-
-          responseContent = statusText;
+          
+          addChatMessage({ role: 'assistant', content: statusText });
+          setPartialAction(null);
+        } else {
+          addChatMessage({ 
+            role: 'assistant', 
+            content: result.message,
+            pendingAction: result.pendingAction
+          });
+          setPartialAction(result.nextPartialAction !== undefined ? result.nextPartialAction : null);
         }
-        // Fallback
-        else {
-          responseContent =
-            '🤔 No pude interpretar tu mensaje. Intentá con frases como:\n• "Ayer llovieron 20 mm"\n• "Se sembró soja en Lote Norte"\n• "Actualizar NDVI de Lote Sur a 0.65"\n• "Mostrar inventario"';
-        }
-
-        // Update store: replace messages (remove processing, add real response)
-        useAgriStore.setState({ chatMessages: filtered });
-        addChatMessage({ role: 'assistant', content: responseContent });
+        
         setIsProcessing(false);
       }, delay);
     },
-    [addChatMessage, addActivity, updatePaddockNDVI, findPaddock]
+    [addChatMessage, paddocks, partialAction, setPartialAction]
   );
 
   // ── Submit Handler ────────────────────────────────────────────────────
@@ -225,7 +193,7 @@ export default function WhatsAppCopilot() {
     const trimmed = inputValue.trim();
     if (!trimmed || isProcessing) return;
     setInputValue('');
-    processNaturalLanguage(trimmed);
+    processInput(trimmed);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -328,9 +296,19 @@ export default function WhatsAppCopilot() {
                       {msg.isProcessing ? (
                         <TypingDots />
                       ) : (
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                          {msg.content}
-                        </p>
+                        <>
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                            {msg.content}
+                          </p>
+                          {msg.showLoginButton && (
+                            <button
+                              onClick={() => setAuthModalOpen(true)}
+                              className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white py-1.5 px-3 text-xs font-semibold shadow transition-colors"
+                            >
+                              Conectar / Iniciar Sesión
+                            </button>
+                          )}
+                        </>
                       )}
 
                       {/* Timestamp */}
@@ -342,6 +320,26 @@ export default function WhatsAppCopilot() {
                       >
                         {formatMessageTime(msg.timestamp)}
                       </p>
+                      
+                      {/* State Machine Confirmation Buttons */}
+                      {msg.pendingAction && !isUser && (
+                        <div className="mt-3 flex flex-wrap gap-2 pt-2 border-t border-gray-200">
+                          <button
+                            onClick={() => confirmPendingAction(msg.id, msg.pendingAction!)}
+                            className="flex-1 flex justify-center items-center gap-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md py-1.5 px-3 text-xs font-medium transition-colors"
+                          >
+                            <Check className="h-3 w-3" />
+                            Sí, confirmar
+                          </button>
+                          <button
+                            onClick={() => cancelPendingAction(msg.id)}
+                            className="flex-1 flex justify-center items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md py-1.5 px-3 text-xs font-medium transition-colors border border-gray-300"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            Cancelar
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -353,6 +351,20 @@ export default function WhatsAppCopilot() {
           {/* ── Input Area ─────────────────────────────────────────────── */}
           <div className="border-t border-gray-200 bg-white px-3 py-3">
             <div className="flex items-center gap-2">
+              <button 
+                type="button" 
+                className="text-gray-400 hover:text-emerald-500 transition-colors"
+                title="Adjuntar Imagen / Foto"
+              >
+                <Camera className="h-5 w-5" />
+              </button>
+              <button 
+                type="button" 
+                className="text-gray-400 hover:text-emerald-500 transition-colors"
+                title="Adjuntar Archivo"
+              >
+                <Paperclip className="h-5 w-5" />
+              </button>
               <input
                 ref={inputRef}
                 type="text"
@@ -377,7 +389,11 @@ export default function WhatsAppCopilot() {
                     : 'bg-gray-100 text-gray-300 cursor-not-allowed'
                 )}
               >
-                <SendHorizontal className="h-5 w-5" />
+                {inputValue.trim() ? (
+                  <SendHorizontal className="h-5 w-5" />
+                ) : (
+                  <Mic className="h-5 w-5" />
+                )}
               </button>
             </div>
           </div>

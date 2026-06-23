@@ -151,7 +151,24 @@ export interface Activity {
   inputsConsumed: ActivityInput[];
   notes: string;
   rainfallMm?: number; // solo para tipo 'Lluvia'
+  appliedArea?: number; // Hectáreas reales trabajadas si fue labor parcial
   createdAt: ISOString;
+}
+
+/**
+ * PendingActivity — Estructura temporal para la confirmación desde el chat
+ */
+export interface PendingActivity {
+  type: string;
+  paddockId?: ID | null;
+  date: ISOString;
+  rainfallMm?: number;
+  ndviValue?: number;
+  notes: string;
+  inputsConsumed: ActivityInput[];
+  appliedArea?: number;
+  inputsAsked?: boolean;
+  paddockOptions?: string[];
 }
 
 // ============================================================================
@@ -165,6 +182,9 @@ export interface ChatMessage {
   content: string;
   timestamp: ISOString;
   isProcessing?: boolean;
+  // Metadata especial para tarjetas de confirmación en la UI del bot
+  pendingAction?: PendingActivity;
+  showLoginButton?: boolean;
 }
 
 // ============================================================================
@@ -190,6 +210,7 @@ export interface AgriState {
   isAuthModalOpen: boolean;
   supabaseStatus: 'disconnected' | 'connected' | 'simulated';
   user: any | null; // Guardará el objeto User de Supabase o null
+  partialAction: PendingActivity | null; // Acción parcial en construcción conversacional
 
   // Chat del copiloto
   chatMessages: ChatMessage[];
@@ -203,6 +224,7 @@ export interface AgriActions {
   signOut: () => Promise<void>;
   setUser: (user: any | null) => void;
   setAuthModalOpen: (isOpen: boolean) => void;
+  setPartialAction: (action: PendingActivity | null) => void;
 
   // Modificadores de UI
   setCurrentFarm: (id: ID) => void;
@@ -234,6 +256,7 @@ export interface AgriActions {
 
   // Historial de Actividades (Activities)
   addActivity: (activity: Omit<Activity, 'id' | 'createdAt'>) => Promise<void>;
+  updateActivity: (id: ID, activity: Omit<Activity, 'id' | 'createdAt'>) => Promise<void>;
   deleteActivity: (id: ID) => Promise<void>;
 
   // Chat

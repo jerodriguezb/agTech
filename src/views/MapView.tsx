@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet';
 import type { PathOptions, Layer } from 'leaflet';
 import type { Feature, Geometry } from 'geojson';
@@ -9,10 +9,10 @@ import type { Crop } from '../types';
 import {
   cn,
   ndviToColor,
-  ndviLabel,
   formatHectares,
   formatDate,
 } from '../lib/utils';
+import PaddockHistoryModal from '../components/paddock/PaddockHistoryModal';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type MapMode = 'crop' | 'ndvi';
@@ -29,14 +29,22 @@ interface PaddockProperties {
   lastUpdated: string;
 }
 
-// ─── NDVI color-ramp for legend ──────────────────────────────────────────────
+// ─── NDVI color-ramp for legend (Enfoque Ganadero/Pasturas) ────────────────────
 const ndviRamp = [
-  { min: 0.0, max: 0.2, color: '#DC2626', label: 'Crítico' },
-  { min: 0.2, max: 0.4, color: '#F97316', label: 'Bajo' },
-  { min: 0.4, max: 0.6, color: '#EAB308', label: 'Moderado' },
-  { min: 0.6, max: 0.8, color: '#65A30D', label: 'Bueno' },
-  { min: 0.8, max: 1.0, color: '#15803D', label: 'Óptimo' },
+  { min: 0.0, max: 0.2, color: '#DC2626', label: 'Suelo Desnudo' },
+  { min: 0.2, max: 0.4, color: '#F97316', label: 'Baja Densidad' },
+  { min: 0.4, max: 0.6, color: '#EAB308', label: 'Crecimiento Activo' },
+  { min: 0.6, max: 0.8, color: '#65A30D', label: 'Buen Volumen' },
+  { min: 0.8, max: 1.0, color: '#15803D', label: 'Alta Biomasa' },
 ];
+
+function getNdviPastureLabel(ndvi: number) {
+  if (ndvi < 0.2) return 'Suelo Desnudo';
+  if (ndvi < 0.4) return 'Baja Densidad';
+  if (ndvi < 0.6) return 'Crecimiento Activo';
+  if (ndvi < 0.8) return 'Buen Volumen';
+  return 'Alta Biomasa';
+}
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 export default function MapView() {
@@ -44,6 +52,20 @@ export default function MapView() {
   const crops = useAgriStore((s) => s.crops);
 
   const [mapMode, setMapMode] = useState<MapMode>('crop');
+  
+  // History Modal State
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [selectedPaddockId, setSelectedPaddockId] = useState<string | null>(null);
+
+  // Listen to custom event from Leaflet popup
+  useEffect(() => {
+    const handleOpenHistory = (e: any) => {
+      setSelectedPaddockId(e.detail.paddockId);
+      setHistoryModalOpen(true);
+    };
+    window.addEventListener('openPaddockHistory', handleOpenHistory);
+    return () => window.removeEventListener('openPaddockHistory', handleOpenHistory);
+  }, []);
 
   // Build crop lookup
   const cropById = useMemo(() => {
@@ -130,7 +152,7 @@ export default function MapView() {
               <span style="display:inline-flex;align-items:center;gap:4px">
                 <span style="width:8px;height:8px;border-radius:50%;background:${ndviColor};display:inline-block"></span>
                 <strong style="color:${ndviColor}">${p.ndvi.toFixed(2)}</strong>
-                <span style="font-size:11px;color:#6b7280">(${ndviLabel(p.ndvi)})</span>
+                <span style="font-size:11px;color:#6b7280">(${getNdviPastureLabel(p.ndvi)})</span>
               </span>
             </div>
             <div style="display:flex;justify-content:space-between">
@@ -141,6 +163,12 @@ export default function MapView() {
               <span>Actualizado</span>
               <span>${formatDate(p.lastUpdated)}</span>
             </div>
+            <button 
+              onclick="window.dispatchEvent(new CustomEvent('openPaddockHistory', { detail: { paddockId: '${p.id}' } }))"
+              style="margin-top:10px;width:100%;padding:6px;background-color:#10b981;color:white;border:none;border-radius:6px;font-weight:600;font-size:12px;cursor:pointer;"
+            >
+              Ver Ficha Histórica
+            </button>
           </div>
         </div>
       `;
@@ -276,6 +304,13 @@ export default function MapView() {
           </div>
         )}
       </div>
+
+      {/* History Modal */}
+      <PaddockHistoryModal 
+        isOpen={historyModalOpen} 
+        onClose={() => setHistoryModalOpen(false)} 
+        paddockId={selectedPaddockId} 
+      />
     </div>
   );
 }

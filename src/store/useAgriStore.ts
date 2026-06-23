@@ -58,6 +58,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
   isAuthModalOpen: false,
   supabaseStatus: isSupabaseConfigured ? 'disconnected' : 'simulated',
   user: null,
+  partialAction: null,
 
   // ─── Chat del Copiloto ─────────────────────────────────────────────
   chatMessages: [welcomeMessage],
@@ -241,6 +242,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           responsible: staffMatch ? `${staffMatch.firstName} ${staffMatch.lastName}`.trim() : a.responsible,
           notes: a.notes || '',
           rainfallMm: a.rainfall_mm ? Number(a.rainfall_mm) : undefined,
+          appliedArea: a.applied_area ? Number(a.applied_area) : undefined,
           createdAt: a.created_at,
           inputsConsumed: (a.activity_inputs || []).map((ai: any) => ({
             inventoryItemId: ai.inventory_item_id,
@@ -329,6 +331,10 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
     set({ user });
   },
 
+  setPartialAction: (action) => {
+    set({ partialAction: action });
+  },
+
   // ─── Mutaciones de Negocio ─────────────────────────────────────────
 
   addActivity: async (activityData: Omit<Activity, 'id' | 'createdAt'>) => {
@@ -372,6 +378,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           responsible: activityData.responsible,
           notes: activityData.notes,
           rainfall_mm: activityData.rainfallMm,
+          applied_area: activityData.appliedArea,
         })
         .select()
         .single();
@@ -435,6 +442,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           responsible: staffMatch ? `${staffMatch.firstName} ${staffMatch.lastName}`.trim() : a.responsible,
           notes: a.notes || '',
           rainfallMm: a.rainfall_mm ? Number(a.rainfall_mm) : undefined,
+          appliedArea: a.applied_area ? Number(a.applied_area) : undefined,
           createdAt: a.created_at,
           inputsConsumed: (a.activity_inputs || []).map((ai: any) => ({
             inventoryItemId: ai.inventory_item_id,
@@ -521,6 +529,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           responsible: staffMatch ? `${staffMatch.firstName} ${staffMatch.lastName}`.trim() : a.responsible,
           notes: a.notes || '',
           rainfallMm: a.rainfall_mm ? Number(a.rainfall_mm) : undefined,
+          appliedArea: a.applied_area ? Number(a.applied_area) : undefined,
           createdAt: a.created_at,
           inputsConsumed: (a.activity_inputs || []).map((ai: any) => ({
             inventoryItemId: ai.inventory_item_id,
@@ -536,6 +545,146 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       });
     } catch (err) {
       console.error('Error al eliminar actividad en Supabase:', err);
+      throw err;
+    }
+  },
+
+  updateActivity: async (id, activityData) => {
+    const state = get();
+
+    if (state.supabaseStatus !== 'connected' || !supabase) {
+      // Flujo local simulado
+      // 1. Revertir stock viejo
+      const oldActivity = state.activities.find((a) => a.id === id);
+      if (oldActivity && oldActivity.inputsConsumed.length > 0) {
+        for (const input of oldActivity.inputsConsumed) {
+          get().updateInventoryStock(input.inventoryItemId, input.quantity);
+        }
+      }
+
+      // 2. Aplicar stock nuevo
+      if (activityData.inputsConsumed.length > 0) {
+        for (const input of activityData.inputsConsumed) {
+          get().updateInventoryStock(input.inventoryItemId, -input.quantity);
+        }
+      }
+
+      // 3. Actualizar la actividad
+      set((s) => {
+        const updatedActivities = s.activities.map((a) =>
+          a.id === id
+            ? {
+                ...a,
+                ...activityData,
+              }
+            : a
+        );
+        saveToLocalStorage('agrocopilot_activities', updatedActivities);
+        return { activities: updatedActivities };
+      });
+      return;
+    }
+
+    // Flujo persistente en Supabase
+    try {
+      // 1. Actualizar actividad principal
+      const { error: actError } = await supabase
+        .from('activities')
+        .update({
+          paddock_id: activityData.paddockId,
+          activity_type_id: activityData.activityTypeId || null,
+          type: activityData.type,
+          date: activityData.date,
+          staff_id: activityData.staffId || null,
+          responsible: activityData.responsible,
+          notes: activityData.notes,
+          rainfall_mm: activityData.rainfallMm,
+          applied_area: activityData.appliedArea,
+        })
+        .eq('id', id);
+
+      if (actError) throw actError;
+
+      // 2. Actualizar insumos consumidos.
+      // La forma más limpia es eliminar los viejos e insertar los nuevos para disparar los triggers.
+      const { error: deleteError } = await supabase
+        .from('activity_inputs')
+        .delete()
+        .eq('activity_id', id);
+
+      if (deleteError) throw deleteError;
+
+      if (activityData.inputsConsumed.length > 0) {
+        const { error: inputsError } = await supabase
+          .from('activity_inputs')
+          .insert(
+            activityData.inputsConsumed.map((input) => ({
+              activity_id: id,
+              inventory_item_id: input.inventoryItemId,
+              quantity: input.quantity,
+              unit: input.unit,
+            }))
+          );
+
+        if (inputsError) throw inputsError;
+      }
+
+      // 3. Re-cargar actividades e inventario
+      const [inventoryRes, activitiesRes] = await Promise.all([
+        supabase.from('inventory_items').select('*').eq('farm_id', state.currentFarmId),
+        supabase
+          .from('activities')
+          .select('*, activity_inputs(*)')
+          .eq('farm_id', state.currentFarmId)
+          .order('date', { ascending: false }),
+      ]);
+
+      if (inventoryRes.error) throw inventoryRes.error;
+      if (activitiesRes.error) throw activitiesRes.error;
+
+      const mappedInventory = (inventoryRes.data || []).map((i: any) => ({
+        id: i.id,
+        name: i.name,
+        category: i.category as InputCategory,
+        currentStock: Number(i.current_stock),
+        minimumStock: Number(i.minimum_stock),
+        unit: i.unit,
+        unitCost: Number(i.unit_cost),
+        lastRestocked: i.last_restocked || i.created_at,
+      }));
+
+      const mappedActivities = (activitiesRes.data || []).map((a: any) => {
+        const typeMatch = state.activityTypes.find((t: any) => t.id === a.activity_type_id);
+        const staffMatch = state.staff.find((s: any) => s.id === a.staff_id);
+        return {
+          id: a.id,
+          farmId: a.farm_id,
+          paddockId: a.paddock_id,
+          activityTypeId: a.activity_type_id,
+          type: typeMatch ? typeMatch.name : a.type,
+          color: typeMatch ? typeMatch.color : undefined,
+          icon: typeMatch ? typeMatch.icon : undefined,
+          date: a.date,
+          staffId: a.staff_id,
+          responsible: staffMatch ? `${staffMatch.firstName} ${staffMatch.lastName}`.trim() : a.responsible,
+          notes: a.notes || '',
+          rainfallMm: a.rainfall_mm ? Number(a.rainfall_mm) : undefined,
+          appliedArea: a.applied_area ? Number(a.applied_area) : undefined,
+          createdAt: a.created_at,
+          inputsConsumed: (a.activity_inputs || []).map((ai: any) => ({
+            inventoryItemId: ai.inventory_item_id,
+            quantity: Number(ai.quantity),
+            unit: ai.unit,
+          })),
+        };
+      });
+
+      set({
+        inventory: mappedInventory,
+        activities: mappedActivities,
+      });
+    } catch (err) {
+      console.error('Error al actualizar actividad en Supabase:', err);
       throw err;
     }
   },

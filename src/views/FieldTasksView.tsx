@@ -21,11 +21,13 @@ import {
   Beaker,
   Loader2,
   AlertCircle,
+  Pencil,
 } from 'lucide-react';
 import { useAgriStore } from '../store/useAgriStore';
 import { cn, formatDateTime } from '../lib/utils';
 import StaffManagerModal from '../components/settings/StaffManagerModal';
 import ActivityTypesManagerModal from '../components/settings/ActivityTypesManagerModal';
+import type { Activity } from '../types';
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -56,6 +58,7 @@ export default function FieldTasksView() {
 
   const [activeFilter, setActiveFilter] = useState<string | 'Todas'>('Todas');
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [editingActivity, setEditingActivity] = useState<Activity | null>(null);
 
   // Modals for CRUD
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
@@ -83,9 +86,26 @@ export default function FieldTasksView() {
   const paddockMap = new Map(paddocks.map((p) => [p.id, p]));
   const inventoryMap = new Map(inventory.map((i) => [i.id, i]));
 
+  const normalizeString = (str?: string) => {
+    if (!str) return '';
+    return str
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+  };
+
   // Filter and sort activities
   const filteredActivities = activities
-    .filter((a) => activeFilter === 'Todas' || a.activityTypeId === activeFilter || a.type === activeFilter)
+    .filter((a) => {
+      if (activeFilter === 'Todas') return true;
+      if (a.activityTypeId === activeFilter) return true;
+      const targetType = activityTypes.find((t) => t.id === activeFilter);
+      if (targetType) {
+        return normalizeString(a.type) === normalizeString(targetType.name);
+      }
+      return false;
+    })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const toggleExpanded = (activityId: string) => {
@@ -120,6 +140,50 @@ export default function FieldTasksView() {
     }
   };
 
+  const handleEditActivity = (activity: Activity) => {
+    setEditingActivity(activity);
+    
+    const typeObj = activityTypes.find((t) => t.name === activity.type || t.id === activity.activityTypeId);
+    const staffObj = staff.find((s) => `${s.firstName} ${s.lastName}`.trim() === activity.responsible || s.id === activity.staffId);
+    
+    setActivityTypeId(activity.activityTypeId || typeObj?.id || '');
+    setPaddockId(activity.paddockId || '');
+    
+    const localDate = new Date(new Date(activity.date).getTime() - new Date(activity.date).getTimezoneOffset() * 60000)
+      .toISOString()
+      .substring(0, 16);
+    setDate(localDate);
+    
+    setStaffId(activity.staffId || staffObj?.id || '');
+    setNotes(activity.notes || '');
+    setRainfallMm(activity.rainfallMm?.toString() || '');
+    setSelectedInputs(
+      activity.inputsConsumed.map((i) => ({
+        inventoryItemId: i.inventoryItemId,
+        quantity: i.quantity,
+      }))
+    );
+    setError(null);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenRegisterModal = () => {
+    setEditingActivity(null);
+    setActivityTypeId('');
+    setPaddockId('');
+    setDate(
+      new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+        .toISOString()
+        .substring(0, 16)
+    );
+    setStaffId('');
+    setNotes('');
+    setRainfallMm('');
+    setSelectedInputs([]);
+    setError(null);
+    setIsModalOpen(true);
+  };
+
   const handleInputChange = (
     idx: number,
     field: 'inventoryItemId' | 'quantity',
@@ -144,8 +208,19 @@ export default function FieldTasksView() {
         if (!invItem) {
           throw new Error('Insumo no encontrado en el pañol.');
         }
-        if (Number(input.quantity) > invItem.currentStock) {
-          throw new Error(`No hay suficiente stock de ${invItem.name}. Stock actual: ${invItem.currentStock} ${invItem.unit}.`);
+
+        // Si estamos editando, sumar el stock previamente consumido por esta actividad
+        let previousQuantity = 0;
+        if (editingActivity) {
+          const prevInput = editingActivity.inputsConsumed.find((i) => i.inventoryItemId === input.inventoryItemId);
+          if (prevInput) {
+            previousQuantity = prevInput.quantity;
+          }
+        }
+
+        const adjustedStock = invItem.currentStock + previousQuantity;
+        if (Number(input.quantity) > adjustedStock) {
+          throw new Error(`No hay suficiente stock de ${invItem.name}. Stock disponible: ${adjustedStock} ${invItem.unit}.`);
         }
       }
 
@@ -174,11 +249,17 @@ export default function FieldTasksView() {
         inputsConsumed: inputs,
       };
 
-      const addActivity = useAgriStore.getState().addActivity;
-      await addActivity(activityData);
+      if (editingActivity) {
+        const updateActivity = useAgriStore.getState().updateActivity;
+        await updateActivity(editingActivity.id, activityData);
+      } else {
+        const addActivity = useAgriStore.getState().addActivity;
+        await addActivity(activityData);
+      }
 
       // Reset Form and close modal
       setIsModalOpen(false);
+      setEditingActivity(null);
       setActivityTypeId('');
       setPaddockId('');
       setDate(
@@ -191,7 +272,7 @@ export default function FieldTasksView() {
       setRainfallMm('');
       setSelectedInputs([]);
     } catch (err: any) {
-      console.error('Error al registrar actividad:', err);
+      console.error('Error al guardar actividad:', err);
       setError(err.message || 'Error al guardar la actividad en la base de datos.');
     } finally {
       setLoading(false);
@@ -216,7 +297,7 @@ export default function FieldTasksView() {
           </div>
         </div>
         <button
-          onClick={() => setIsModalOpen(true)}
+          onClick={handleOpenRegisterModal}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-md transition-all hover:bg-emerald-700 active:scale-[0.98]"
         >
           <Plus className="h-5 w-5" />
@@ -250,7 +331,10 @@ export default function FieldTasksView() {
 
         {activityTypes.map((typeObj) => {
           const Icon = getIconComponent(typeObj.icon);
-          const count = activities.filter((a) => a.activityTypeId === typeObj.id || a.type === typeObj.name).length;
+          const count = activities.filter((a) => 
+            a.activityTypeId === typeObj.id || 
+            normalizeString(a.type) === normalizeString(typeObj.name)
+          ).length;
 
           return (
             <button
@@ -347,6 +431,13 @@ export default function FieldTasksView() {
                         <time className="text-xs font-medium text-gray-400">
                           {formatDateTime(activity.date)}
                         </time>
+                        <button
+                          onClick={() => handleEditActivity(activity)}
+                          className="rounded-md p-1.5 text-gray-400 hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                          title="Editar actividad"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
                         <button
                           onClick={() => handleDeleteActivity(activity.id)}
                           className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors"
@@ -446,7 +537,9 @@ export default function FieldTasksView() {
             <div className="bg-gradient-to-r from-emerald-600 to-emerald-800 px-6 py-4 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <ClipboardList className="h-5 w-5 text-emerald-300" />
-                <h2 className="text-lg font-bold tracking-tight">Registrar Actividad</h2>
+                <h2 className="text-lg font-bold tracking-tight">
+                  {editingActivity ? 'Editar Actividad' : 'Registrar Actividad'}
+                </h2>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -693,7 +786,7 @@ export default function FieldTasksView() {
                   className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-md hover:bg-emerald-700 transition-all active:scale-[0.98] disabled:opacity-50"
                 >
                   {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {loading ? 'Registrando...' : 'Registrar Tarea'}
+                  {loading ? 'Guardando...' : editingActivity ? 'Guardar Cambios' : 'Registrar Tarea'}
                 </button>
               </div>
             </form>
