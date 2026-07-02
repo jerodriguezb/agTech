@@ -73,7 +73,12 @@ export default function WhatsAppCopilot() {
   }, [isCopilotOpen]);
 
   // Handle confirmation of a pending activity
-  const confirmPendingAction = useCallback((messageId: string, action: PendingActivity) => {
+  const confirmPendingAction = useCallback(async (messageId: string, action: PendingActivity) => {
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('[confirmPendingAction] 🟡 INICIO');
+    console.log('[confirmPendingAction] action:', JSON.stringify(action, null, 2));
+    console.log('[confirmPendingAction] user:', user?.email);
+
     // Check if user is logged in
     if (!user) {
       addChatMessage({ 
@@ -98,23 +103,50 @@ export default function WhatsAppCopilot() {
 
     if (action.type === 'NDVI_UPDATE') {
       if (action.paddockId && action.ndviValue !== undefined) {
-        updatePaddockNDVI(action.paddockId, action.ndviValue);
-        addChatMessage({ role: 'assistant', content: `✅ NDVI actualizado exitosamente por **${responsibleName}**.` });
+        try {
+          await updatePaddockNDVI(action.paddockId, action.ndviValue);
+          addChatMessage({ role: 'assistant', content: `✅ NDVI actualizado exitosamente por **${responsibleName}**.` });
+        } catch (error: any) {
+          console.error('[agroCopilot] Error en updatePaddockNDVI:', error);
+          addChatMessage({ role: 'assistant', content: `❌ **Error al actualizar NDVI:** ${error?.message || JSON.stringify(error)}` });
+        }
       }
     } else {
-      addActivity({
-        type: action.type,
-        farmId: useAgriStore.getState().currentFarmId,
-        paddockId: action.paddockId || null,
-        date: action.date,
-        responsible: responsibleName,
-        inputsConsumed: action.inputsConsumed,
-        notes: action.notes,
-        rainfallMm: action.rainfallMm,
-        appliedArea: action.appliedArea
-      });
-      addChatMessage({ role: 'assistant', content: `✅ ${action.type} registrada exitosamente. Responsable: **${responsibleName}**.` });
+      try {
+        const state = useAgriStore.getState();
+        const matchedType = state.activityTypes.find(
+          (t) => t.name.toLowerCase() === action.type.toLowerCase()
+        );
+
+        console.log('[confirmPendingAction] matchedType:', matchedType ? `${matchedType.name} (${matchedType.id})` : 'NO MATCH');
+        console.log('[confirmPendingAction] supabaseStatus:', state.supabaseStatus);
+
+        const activityPayload = {
+          type: matchedType ? matchedType.name : action.type,
+          activityTypeId: matchedType ? matchedType.id : undefined,
+          farmId: state.currentFarmId,
+          paddockId: action.paddockId || null,
+          // Si la fecha de Gemini solo tiene YYYY-MM-DD, le agregamos la hora actual para que quede en lo alto del sort
+          date: action.date.includes('T') ? action.date : `${action.date}T${new Date().toISOString().split('T')[1]}`,
+          responsible: responsibleName,
+          inputsConsumed: action.inputsConsumed,
+          notes: action.notes,
+          rainfallMm: action.rainfallMm,
+          appliedArea: action.appliedArea
+        };
+        console.log('[confirmPendingAction] Calling addActivity with:', JSON.stringify(activityPayload, null, 2));
+
+        await addActivity(activityPayload);
+        console.log('[confirmPendingAction] ✅ addActivity completed without error');
+        addChatMessage({ role: 'assistant', content: `✅ ${action.type} registrada exitosamente. Responsable: **${responsibleName}**.` });
+      } catch (error: any) {
+        console.error('[agroCopilot] Error en addActivity:', error);
+        // Si hay error en Supabase, el backend manda un mensaje útil en error.message, o en error.details
+        const errorMsg = error?.message || error?.details || JSON.stringify(error);
+        addChatMessage({ role: 'assistant', content: `❌ **Error al guardar en la base de datos:** ${errorMsg}` });
+      }
     }
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   }, [addActivity, updatePaddockNDVI, addChatMessage, user, setAuthModalOpen, setPartialAction]);
 
   const cancelPendingAction = useCallback((messageId: string) => {
@@ -130,6 +162,22 @@ export default function WhatsAppCopilot() {
 
   const processInput = useCallback(
     async (input: string) => {
+      const currentState = useAgriStore.getState();
+      const currentChatHistory = currentState.chatMessages;
+
+      // Intercepción: Si el usuario confirma por texto, forzamos la acción pendiente
+      const isConfirmWord = /^(sí|si|sipi|dale|ok|okis|correcto|confirmar|perfecto|se|obvio|claro|mandale|de una)$/i.test(input.trim());
+      if (isConfirmWord) {
+        // Buscar el último mensaje del asistente
+        const lastMsg = [...currentChatHistory].reverse().find(m => m.role === 'assistant');
+        if (lastMsg && lastMsg.pendingAction) {
+          // Confirmación automática sin pasar por Gemini
+          addChatMessage({ role: 'user', content: input });
+          await confirmPendingAction(lastMsg.id, lastMsg.pendingAction);
+          return;
+        }
+      }
+
       // 1. Add user message
       addChatMessage({ role: 'user', content: input });
 
@@ -142,9 +190,7 @@ export default function WhatsAppCopilot() {
       setIsProcessing(true);
 
       try {
-        const currentState = useAgriStore.getState();
         const inventory = currentState.inventory;
-        const currentChatHistory = currentState.chatMessages;
         const currentPartialAction = currentState.partialAction;
 
         // Llamar a Gemini (o fallback regex automático)

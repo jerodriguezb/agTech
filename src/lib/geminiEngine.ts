@@ -1,6 +1,5 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import type { Paddock, InventoryItem, Crop, ChatMessage, PendingActivity } from '../types';
-import { processNaturalLanguage } from './nlpEngine';
 import { useAgriStore } from '../store/useAgriStore';
 
 // ─── Configuración ───────────────────────────────────────────────────────────
@@ -107,7 +106,10 @@ ${top10WithStock || '- (No hay insumos con stock actualmente)'}
    - Hablá siempre como un ser humano que asiste a otro, no des respuestas esquemáticas o excesivamente cortantes salvo cuando sea necesario para ser claro.
 
 4. **Fechas:**
-   - Si dice "ayer", "antes de ayer", etc., calculá la fecha relativa correspondiente. Si no dice nada, asumí el día de hoy. Las fechas en el JSON resultante deben estar en formato ISO 8601 (YYYY-MM-DD).
+   - LA FECHA Y HORA ACTUAL ES: ${new Date().toISOString().split('T')[0]} (${new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}).
+   - Si el usuario dice "hoy", usá la fecha de arriba. Si dice "ayer", restá un día. Si dice "antes de ayer", restá dos días. Y así sucesivamente.
+   - Si no menciona ninguna fecha, asumí la fecha de hoy (${new Date().toISOString().split('T')[0]}).
+   - Las fechas en el JSON resultante deben estar en formato ISO 8601 (YYYY-MM-DD).
 
 5. **Formato JSON:**
    Respondé SIEMPRE y ÚNICAMENTE en formato JSON válido con esta estructura exacta (no agregues texto fuera del JSON):
@@ -135,7 +137,8 @@ ${top10WithStock || '- (No hay insumos con stock actualmente)'}
   }
 }
 
-- "ready_to_confirm" = true solo cuando ya tenés todos los datos indispensables (Actividad, Lote, e Insumos consultados si corresponden) y le estás mostrando el resumen final de confirmación con los botones "Sí, confirmar" y "Cancelar".
+- "intent": DEBE ser "register_activity" en el momento que tengas los datos para registrar (aunque falten algunos). NO uses "conversation" cuando estés armando un registro.
+- "ready_to_confirm": true/false. DEBE SER true EXACTAMENTE en el MISMO mensaje en el que le mostrás el resumen al usuario y le preguntás "¿Está todo correcto para confirmar?". Es obligatorio que sea true en ese momento para que el sistema pueda mostrarle los botones de [Sí, confirmar] en la pantalla.
 - "activity" puede ser null si estás en medio de la charla preguntando datos faltantes o conversando.
 - En "inputs", usá los IDs y nombres reales del inventario. Si no se usaron insumos, dejá el array vacío.`;
 }
@@ -201,15 +204,21 @@ function geminiResponseToResult(
 
     const pendingActivity: PendingActivity = {
       type: act.type || '',
-      paddockId: act.paddock_id || undefined,
+      paddockId: (act.paddock_id === 'null' ? null : act.paddock_id) || undefined,
       date: act.date || new Date().toISOString(),
       inputsConsumed: validatedInputs,
       notes: act.notes || '',
-      rainfallMm: act.rainfall_mm || undefined,
-      ndviValue: act.ndvi_value || undefined,
+      rainfallMm: act.rainfall_mm && act.rainfall_mm !== 'null' ? Number(act.rainfall_mm) : undefined,
+      ndviValue: act.ndvi_value && act.ndvi_value !== 'null' ? Number(act.ndvi_value) : undefined,
     };
 
-    if (parsed.ready_to_confirm) {
+    // Heurística robusta: Si tiene tipo y el mensaje habla de confirmar o registrar, forzamos la bandera
+    const isComplete = !!act.type && (
+      parsed.ready_to_confirm || 
+      /(confirmar|correcto\?|registramos)/i.test(parsed.message)
+    );
+
+    if (isComplete) {
       return {
         success: true,
         message: parsed.message,
@@ -220,7 +229,7 @@ function geminiResponseToResult(
       return {
         success: false,
         message: parsed.message,
-        nextPartialAction: null, // Gemini maneja el contexto via historial
+        nextPartialAction: pendingActivity, // Guardamos lo recolectado hasta ahora
       };
     }
   }
@@ -255,8 +264,16 @@ export async function processWithGemini(
   }
 
   try {
+    const customPrompt = useAgriStore.getState().customSystemPrompt;
+    // Construir system prompt con datos actuales de la BD
+    const systemPrompt = buildSystemPrompt(paddocks, inventory, crops, customPrompt);
+
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
+      systemInstruction: {
+        role: "system",
+        parts: [{ text: systemPrompt }]
+      },
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -270,27 +287,32 @@ export async function processWithGemini(
       },
     });
 
-    const customPrompt = useAgriStore.getState().customSystemPrompt;
-    // Construir system prompt con datos actuales de la BD
-    const systemPrompt = buildSystemPrompt(paddocks, inventory, crops, customPrompt);
-
     // Filtrar mensajes del sistema y placeholders de procesamiento
     const chatHistoryClean = chatHistory.filter(m => m.role !== 'system' && !m.isProcessing);
 
     // Obtener los mensajes pasados (excluyendo el mensaje actual que vamos a enviar en sendMessage)
     const pastMessages = chatHistoryClean.slice(0, -1);
 
-    // Asegurar que el historial comience con un mensaje de tipo 'user'
-    let firstUserIndex = pastMessages.findIndex(m => m.role === 'user');
-    const validPastMessages = firstUserIndex !== -1 ? pastMessages.slice(firstUserIndex) : [];
-
-    // Tomar los últimos 20 mensajes del historial válido
-    const recentPastMessages = validPastMessages.slice(-20);
-
-    const geminiHistory = recentPastMessages.map(m => ({
-      role: m.role === 'user' ? 'user' as const : 'model' as const,
-      parts: [{ text: m.content }],
-    }));
+    // Construir historial válido para Gemini (estrictamente alternado, empezando con user y terminando con model)
+    const geminiHistory: { role: 'user' | 'model', parts: { text: string }[] }[] = [];
+    let expectedRole = 'model';
+    
+    for (let i = pastMessages.length - 1; i >= 0; i--) {
+      const role = pastMessages[i].role === 'user' ? 'user' : 'model';
+      if (role === expectedRole) {
+        geminiHistory.unshift({
+          role: role as 'user' | 'model',
+          parts: [{ text: pastMessages[i].content }],
+        });
+        expectedRole = expectedRole === 'model' ? 'user' : 'model';
+      }
+      if (geminiHistory.length >= 20) break;
+    }
+    
+    // Gemini requiere que el historial comience con 'user'
+    if (geminiHistory.length > 0 && geminiHistory[0].role === 'model') {
+      geminiHistory.shift();
+    }
 
     console.log('[agroCopilot] Input:', userMessage);
     console.log('[agroCopilot] Clean history:', chatHistoryClean);
@@ -300,7 +322,6 @@ export async function processWithGemini(
     // Crear chat con historial
     const chat = model.startChat({
       history: geminiHistory,
-      systemInstruction: systemPrompt,
     });
 
     // Enviar mensaje del usuario
@@ -320,22 +341,17 @@ export async function processWithGemini(
       parsed = JSON.parse(cleanJson);
     }
 
+    console.log('[agroCopilot] Gemini RAW Response:', JSON.stringify(parsed, null, 2));
+
     // Convertir a formato del store
     return geminiResponseToResult(parsed, paddocks, inventory);
   } catch (error: any) {
-    console.error('[agroCopilot] Error con Gemini, usando fallback regex:', error);
-
-    // Fallback al motor regex local
-    const fallbackResult = processNaturalLanguage(userMessage, paddocks, inventory, partialAction);
+    console.error('[agroCopilot] Error con Gemini:', error);
     
-    // Si el error es de API key o configuración, agregar nota
-    if (error?.message?.includes('API_KEY') || error?.status === 403) {
-      return {
-        ...fallbackResult,
-        message: `⚠️ _Modo offline (error de API)._ ${fallbackResult.message}`,
-      };
-    }
-
-    return fallbackResult;
+    return {
+      action: 'chat',
+      message: `⚠️ **Error en IA (Gemini):** ${error?.message || 'Error desconocido'}`,
+      confidence: 1,
+    };
   }
 }

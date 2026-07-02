@@ -410,7 +410,15 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
   addActivity: async (activityData: Omit<Activity, 'id' | 'createdAt'>) => {
     const state = get();
 
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('[addActivity] 🟡 INICIO');
+    console.log('[addActivity] supabaseStatus:', state.supabaseStatus);
+    console.log('[addActivity] supabase client exists:', !!supabase);
+    console.log('[addActivity] currentFarmId:', state.currentFarmId);
+    console.log('[addActivity] activityData:', JSON.stringify(activityData, null, 2));
+
     if (state.supabaseStatus !== 'connected' || !supabase) {
+      console.log('[addActivity] ⚠️ Usando flujo LOCAL (no conectado a Supabase)');
       // Flujo local simulado
       const newActivity: Activity = {
         ...activityData,
@@ -430,28 +438,37 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           get().updateInventoryStock(input.inventoryItemId, -input.quantity);
         }
       }
+      console.log('[addActivity] ✅ Actividad guardada LOCALMENTE. Total actividades:', get().activities.length);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       return;
     }
 
     // Flujo persistente en Supabase
+    console.log('[addActivity] 🟢 Usando flujo SUPABASE');
     try {
       // 1. Insertar actividad principal
+      const insertPayload = {
+        farm_id: state.currentFarmId,
+        paddock_id: activityData.paddockId,
+        activity_type_id: activityData.activityTypeId || null,
+        type: activityData.type,
+        date: activityData.date,
+        staff_id: activityData.staffId || null,
+        responsible: activityData.responsible,
+        notes: activityData.notes,
+        rainfall_mm: activityData.rainfallMm,
+        applied_area: activityData.appliedArea,
+      };
+      console.log('[addActivity] INSERT payload:', JSON.stringify(insertPayload, null, 2));
+
       const { data: actData, error: actError } = await supabase
         .from('activities')
-        .insert({
-          farm_id: state.currentFarmId,
-          paddock_id: activityData.paddockId,
-          activity_type_id: activityData.activityTypeId || null,
-          type: activityData.type,
-          date: activityData.date,
-          staff_id: activityData.staffId || null,
-          responsible: activityData.responsible,
-          notes: activityData.notes,
-          rainfall_mm: activityData.rainfallMm,
-          applied_area: activityData.appliedArea,
-        })
+        .insert(insertPayload)
         .select()
         .single();
+
+      console.log('[addActivity] INSERT result - data:', JSON.stringify(actData, null, 2));
+      console.log('[addActivity] INSERT result - error:', actError);
 
       if (actError) throw actError;
 
@@ -483,6 +500,9 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
 
       if (inventoryRes.error) throw inventoryRes.error;
       if (activitiesRes.error) throw activitiesRes.error;
+
+      console.log('[addActivity] RE-SELECT activities count:', activitiesRes.data?.length);
+      console.log('[addActivity] RE-SELECT inventory count:', inventoryRes.data?.length);
 
       // Actualizar estado en React
       const mappedInventory = (inventoryRes.data || []).map((i: any) => ({
@@ -526,8 +546,13 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         inventory: mappedInventory,
         activities: mappedActivities,
       });
+      console.log('[addActivity] ✅ Estado actualizado con Supabase. Total actividades en state:', mappedActivities.length);
+      const top5 = [...mappedActivities].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5);
+      console.log('[addActivity] Top 5 actividades en el estado ahora mismo:', JSON.stringify(top5.map(a => ({ id: a.id, type: a.type, date: a.date })), null, 2));
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     } catch (err) {
-      console.error('Error al registrar actividad en Supabase:', err);
+      console.error('[addActivity] ❌ Error al registrar actividad en Supabase:', err);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       throw err;
     }
   },
