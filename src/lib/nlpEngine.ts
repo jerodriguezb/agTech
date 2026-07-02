@@ -1,5 +1,6 @@
 import { Paddock, InventoryItem, PendingActivity } from '../types';
 import { subDays } from 'date-fns';
+import { useAgriStore } from '../store/useAgriStore';
 
 /**
  * Diccionario de alias local (Jerga)
@@ -173,30 +174,31 @@ function findInventoryItems(text: string, inventory: InventoryItem[]): Inventory
   const normalizedText = text.toLowerCase();
   const matched: InventoryItem[] = [];
   
-  const aliasMap: Record<string, string> = {
-    'gasoil': 'gasoil grado 3',
-    'gas-oil': 'gasoil grado 3',
-    'combustible': 'gasoil grado 3',
-    'diesel': 'gasoil grado 3',
-    'glifosato': 'glifosato 66.2%',
-    'glifo': 'glifosato 66.2%',
-    '2,4-d': '2,4-d éster 100%',
-    '2.4-d': '2,4-d éster 100%',
-    '24d': '2,4-d éster 100%',
-    'urea': 'urea granulada 46-0-0',
-    'uan': 'fertilizante uan 32%',
-    'semilla de soja': 'semilla soja dm40r16',
-    'semilla soja': 'semilla soja dm40r16',
-    'semilla de maiz': 'semilla híbrida maíz dk72',
-    'semilla de maíz': 'semilla híbrida maíz dk72',
-    'semilla maiz': 'semilla híbrida maíz dk72',
-    'semilla maíz': 'semilla híbrida maíz dk72',
+  const storeAliases = useAgriStore.getState().customAliases;
+  const aliasMap = storeAliases && Object.keys(storeAliases).length > 0 ? storeAliases : {
+    'gasoil': 'Gasoil Grado 3',
+    'gas-oil': 'Gasoil Grado 3',
+    'combustible': 'Gasoil Grado 3',
+    'diesel': 'Gasoil Grado 3',
+    'glifosato': 'Glifosato 66.2%',
+    'glifo': 'Glifosato 66.2%',
+    '2,4-d': '2,4-D Éster 100%',
+    '2.4-d': '2,4-D Éster 100%',
+    '24d': '2,4-D Éster 100%',
+    'urea': 'Urea Granulada 46-0-0',
+    'uan': 'Fertilizante UAN 32%',
+    'semilla de soja': 'Semilla Soja DM40R16',
+    'semilla soja': 'Semilla Soja DM40R16',
+    'semilla de maiz': 'Semilla Híbrida Maíz DK72',
+    'semilla de maíz': 'Semilla Híbrida Maíz DK72',
+    'semilla maiz': 'Semilla Híbrida Maíz DK72',
+    'semilla maíz': 'Semilla Híbrida Maíz DK72',
   };
 
   for (const [alias, targetName] of Object.entries(aliasMap)) {
     const regex = new RegExp(`\\b${alias.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}\\b`, 'i');
     if (regex.test(normalizedText)) {
-      const found = inventory.find(item => item.name.toLowerCase() === targetName);
+      const found = inventory.find(item => item.name.toLowerCase() === targetName.toLowerCase());
       if (found && !matched.some(m => m.id === found.id)) {
         matched.push(found);
       }

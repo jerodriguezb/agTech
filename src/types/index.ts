@@ -172,6 +172,20 @@ export interface PendingActivity {
 }
 
 // ============================================================================
+// Permisos y Roles de Usuario
+// ============================================================================
+
+/** Miembro asignado a un establecimiento con un rol específico */
+export interface FarmUser {
+  id: ID;
+  farmId: ID;
+  email: string;
+  userId: ID | null;
+  role: UserRole;
+  createdAt: ISOString;
+}
+
+// ============================================================================
 // Mensajería del Copiloto
 // ============================================================================
 
@@ -214,7 +228,17 @@ export interface AgriState {
 
   // Chat del copiloto
   chatMessages: ChatMessage[];
+
+  // Configuración de agroCopilot AI
+  customSystemPrompt: string | null;
+  customAliases: Record<string, string>;
+  userRole: UserRole | null;
+
+  // Gestión de Permisos y Miembros del Campo
+  farmUsers: FarmUser[];
 }
+
+export type UserRole = 'owner' | 'manager' | 'accountant' | 'agronomist' | 'operator';
 
 export interface AgriActions {
   // Inicialización y Auth
@@ -262,6 +286,16 @@ export interface AgriActions {
   // Chat
   addChatMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => Promise<void>;
   setMessageProcessing: (messageId: ID, isProcessing: boolean) => void;
+
+  // AI Prompt & Aliases
+  updateSystemPrompt: (prompt: string | null) => Promise<void>;
+  updateAliases: (aliases: Record<string, string>) => Promise<void>;
+
+  // Permisos de Usuarios
+  loadFarmUsers: () => Promise<void>;
+  addFarmUser: (email: string, role: UserRole) => Promise<void>;
+  updateFarmUser: (id: ID, role: UserRole) => Promise<void>;
+  deleteFarmUser: (id: ID) => Promise<void>;
 }
 
 export type AgriStore = AgriState & AgriActions;

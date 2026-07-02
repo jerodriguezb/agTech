@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgriStore, Activity, ChatMessage, AppView, ID, InputCategory, InventoryItem, Paddock, StaffMember, FarmActivityType } from '../types';
+import type { AgriStore, Activity, ChatMessage, AppView, ID, InputCategory, InventoryItem, Paddock, StaffMember, FarmActivityType, UserRole, FarmUser } from '../types';
 import { generateId } from '../lib/utils';
 import {
   mockFarm,
@@ -63,6 +63,30 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
   // ─── Chat del Copiloto ─────────────────────────────────────────────
   chatMessages: [welcomeMessage],
 
+  // Configuración de agroCopilot AI
+  customSystemPrompt: null,
+  customAliases: {
+    'gasoil': 'Gasoil Grado 3',
+    'gas-oil': 'Gasoil Grado 3',
+    'combustible': 'Gasoil Grado 3',
+    'diesel': 'Gasoil Grado 3',
+    'glifosato': 'Glifosato 66.2%',
+    'glifo': 'Glifosato 66.2%',
+    '2,4-d': '2,4-D Éster 100%',
+    '2.4-d': '2,4-D Éster 100%',
+    '24d': '2,4-D Éster 100%',
+    'urea': 'Urea Granulada 46-0-0',
+    'uan': 'Fertilizante UAN 32%',
+    'semilla de soja': 'Semilla Soja DM40R16',
+    'semilla soja': 'Semilla Soja DM40R16',
+    'semilla de maiz': 'Semilla Híbrida Maíz DK72',
+    'semilla de maíz': 'Semilla Híbrida Maíz DK72',
+    'semilla maiz': 'Semilla Híbrida Maíz DK72',
+    'semilla maíz': 'Semilla Híbrida Maíz DK72',
+  },
+  userRole: null,
+  farmUsers: [],
+
   // ─── Carga de Datos y Autenticación ────────────────────────────────
 
   loadInitialData: async () => {
@@ -75,6 +99,16 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       const savedActivities = localStorage.getItem('agrocopilot_activities');
       const savedChat = localStorage.getItem('agrocopilot_chat');
 
+      const savedPrompt = localStorage.getItem('agrocopilot_custom_prompt');
+      const savedAliases = localStorage.getItem('agrocopilot_custom_aliases');
+      const savedPermissions = localStorage.getItem('agrocopilot_farm_users');
+      
+      const defaultPermissions: FarmUser[] = [
+        { id: 'perm-1', farmId: mockFarm.id, email: 'owner@campo.com', userId: 'user-owner', role: 'owner', createdAt: new Date().toISOString() },
+        { id: 'perm-2', farmId: mockFarm.id, email: 'capataz@campo.com', userId: null, role: 'manager', createdAt: new Date().toISOString() },
+        { id: 'perm-3', farmId: mockFarm.id, email: 'contador@campo.com', userId: null, role: 'accountant', createdAt: new Date().toISOString() },
+      ];
+
       set({
         farms: [mockFarm],
         paddocks: savedPaddocks ? JSON.parse(savedPaddocks) : [...mockPaddocks],
@@ -85,6 +119,10 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         currentFarmId: mockFarm.id,
         supabaseStatus: isSupabaseConfigured ? 'disconnected' : 'simulated',
         isLoading: false,
+        customSystemPrompt: savedPrompt || null,
+        customAliases: savedAliases ? JSON.parse(savedAliases) : get().customAliases,
+        userRole: state.user ? 'owner' : null,
+        farmUsers: savedPermissions ? JSON.parse(savedPermissions) : defaultPermissions,
       });
       return;
     }
@@ -140,7 +178,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       const farmId = activeFarm.id;
 
       // 3. Consultas paralelas para el establecimiento seleccionado
-      const [cropsRes, paddocksRes, inventoryRes, activitiesRes, chatRes, staffRes, typesRes] =
+      const [cropsRes, paddocksRes, inventoryRes, activitiesRes, chatRes, staffRes, typesRes, settingsRes, userRoleRes, farmUsersRes] =
         await Promise.all([
           supabase.from('crops').select('*'),
           supabase.from('v_paddocks').select('*').eq('farm_id', farmId),
@@ -157,6 +195,9 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
             .order('created_at', { ascending: true }),
           supabase.from('staff').select('*').eq('farm_id', farmId),
           supabase.from('farm_activity_types').select('*').eq('farm_id', farmId),
+          supabase.from('farm_ai_settings').select('*').eq('farm_id', farmId).maybeSingle(),
+          supabase.from('farm_users').select('*').eq('farm_id', farmId).eq('user_id', userId).maybeSingle(),
+          supabase.from('farm_users').select('*').eq('farm_id', farmId),
         ]);
 
       if (cropsRes.error) throw cropsRes.error;
@@ -259,6 +300,31 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         timestamp: m.created_at,
       }));
 
+      // Determinar rol del usuario
+      let userRole: UserRole | null = null;
+      if (activeFarm.owner_id === userId) {
+        userRole = 'owner';
+      } else if (userRoleRes.data) {
+        userRole = userRoleRes.data.role as UserRole;
+      } else {
+        userRole = 'operator';
+      }
+
+      // Cargar ajustes de IA desde BD
+      const dbSettings = settingsRes.data;
+      const customSystemPrompt = dbSettings ? dbSettings.custom_system_prompt : null;
+      const customAliases = dbSettings ? dbSettings.custom_aliases : get().customAliases;
+
+      // Mapear miembros de la granja
+      const mappedFarmUsers: FarmUser[] = (farmUsersRes.data || []).map((fu: any) => ({
+        id: fu.id,
+        farmId: fu.farm_id,
+        email: fu.email,
+        userId: fu.user_id,
+        role: fu.role as UserRole,
+        createdAt: fu.created_at,
+      }));
+
       set({
         farms: mappedFarms,
         crops: mappedCrops,
@@ -270,6 +336,10 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         chatMessages: mappedChat.length > 0 ? mappedChat : [welcomeMessage],
         currentFarmId: farmId,
         supabaseStatus: 'connected',
+        customSystemPrompt,
+        customAliases,
+        userRole,
+        farmUsers: mappedFarmUsers,
       });
     } catch (err: any) {
       console.error('Error al cargar datos desde Supabase:', err);
@@ -1264,6 +1334,185 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       set((s) => ({ activityTypes: s.activityTypes.filter((i) => i.id !== id) }));
     } catch (err) {
       console.error('Error deleting activity type:', err);
+      throw err;
+    }
+  },
+
+  updateSystemPrompt: async (prompt) => {
+    const state = get();
+    set({ customSystemPrompt: prompt });
+    
+    if (state.supabaseStatus === 'connected' && supabase) {
+      try {
+        const { error } = await supabase
+          .from('farm_ai_settings')
+          .upsert({
+            farm_id: state.currentFarmId,
+            custom_system_prompt: prompt,
+            updated_at: new Date().toISOString()
+          });
+        if (error) throw error;
+      } catch (err) {
+        console.error('Error updating system prompt in Supabase:', err);
+        throw err;
+      }
+    } else {
+      if (prompt === null) {
+        localStorage.removeItem('agrocopilot_custom_prompt');
+      } else {
+        localStorage.setItem('agrocopilot_custom_prompt', prompt);
+      }
+    }
+  },
+
+  updateAliases: async (aliases) => {
+    const state = get();
+    set({ customAliases: aliases });
+    
+    if (state.supabaseStatus === 'connected' && supabase) {
+      try {
+        const { error } = await supabase
+          .from('farm_ai_settings')
+          .upsert({
+            farm_id: state.currentFarmId,
+            custom_aliases: aliases,
+            updated_at: new Date().toISOString()
+          });
+        if (error) throw error;
+      } catch (err) {
+        console.error('Error updating custom aliases in Supabase:', err);
+        throw err;
+      }
+    } else {
+      localStorage.setItem('agrocopilot_custom_aliases', JSON.stringify(aliases));
+    }
+  },
+
+  loadFarmUsers: async () => {
+    const state = get();
+    if (state.supabaseStatus !== 'connected' || !supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from('farm_users')
+        .select('*')
+        .eq('farm_id', state.currentFarmId);
+      if (error) throw error;
+      
+      const mappedUsers: FarmUser[] = (data || []).map((fu: any) => ({
+        id: fu.id,
+        farmId: fu.farm_id,
+        email: fu.email,
+        userId: fu.user_id,
+        role: fu.role as UserRole,
+        createdAt: fu.created_at,
+      }));
+      set({ farmUsers: mappedUsers });
+    } catch (err) {
+      console.error('Error loading farm users:', err);
+    }
+  },
+
+  addFarmUser: async (email, role) => {
+    const state = get();
+    const newEmail = email.trim().toLowerCase();
+    
+    if (state.supabaseStatus !== 'connected' || !supabase) {
+      const newPermission: FarmUser = {
+        id: generateId(),
+        farmId: state.currentFarmId,
+        email: newEmail,
+        userId: null,
+        role,
+        createdAt: new Date().toISOString(),
+      };
+      set((s) => {
+        const updated = [...s.farmUsers, newPermission];
+        saveToLocalStorage('agrocopilot_farm_users', updated);
+        return { farmUsers: updated };
+      });
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('farm_users')
+        .insert({
+          farm_id: state.currentFarmId,
+          email: newEmail,
+          role,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      const newMember: FarmUser = {
+        id: data.id,
+        farmId: data.farm_id,
+        email: data.email,
+        userId: data.user_id,
+        role: data.role as UserRole,
+        createdAt: data.created_at,
+      };
+      set((s) => ({ farmUsers: [...s.farmUsers, newMember] }));
+    } catch (err) {
+      console.error('Error adding farm user:', err);
+      throw err;
+    }
+  },
+
+  updateFarmUser: async (id, role) => {
+    const state = get();
+    
+    if (state.supabaseStatus !== 'connected' || !supabase) {
+      set((s) => {
+        const updated = s.farmUsers.map((fu) => (fu.id === id ? { ...fu, role } : fu));
+        saveToLocalStorage('agrocopilot_farm_users', updated);
+        return { farmUsers: updated };
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('farm_users')
+        .update({ role })
+        .eq('id', id);
+
+      if (error) throw error;
+      set((s) => ({
+        farmUsers: s.farmUsers.map((fu) => (fu.id === id ? { ...fu, role } : fu)),
+      }));
+    } catch (err) {
+      console.error('Error updating farm user role:', err);
+      throw err;
+    }
+  },
+
+  deleteFarmUser: async (id) => {
+    const state = get();
+    
+    if (state.supabaseStatus !== 'connected' || !supabase) {
+      set((s) => {
+        const updated = s.farmUsers.filter((fu) => fu.id !== id);
+        saveToLocalStorage('agrocopilot_farm_users', updated);
+        return { farmUsers: updated };
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('farm_users')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      set((s) => ({
+        farmUsers: s.farmUsers.filter((fu) => fu.id !== id),
+      }));
+    } catch (err) {
+      console.error('Error deleting farm user:', err);
       throw err;
     }
   },

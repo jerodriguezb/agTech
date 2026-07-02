@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { X, SendHorizontal, Leaf, Camera, Mic, Paperclip, Check, Trash2 } from 'lucide-react';
+import { X, SendHorizontal, Leaf, Camera, Mic, Paperclip, Check, Trash2, Settings } from 'lucide-react';
 import { useAgriStore } from '../../store/useAgriStore';
 import { cn, formatCurrency, formatNumber } from '../../lib/utils';
-import { processNaturalLanguage } from '../../lib/nlpEngine';
+import { processWithGemini, isGeminiConfigured } from '../../lib/geminiEngine';
 import type { PendingActivity } from '../../types';
+import AISettingsModal from '../settings/AISettingsModal';
 
 // ─── Typing Indicator ─────────────────────────────────────────────────────────
 
@@ -44,17 +45,18 @@ export default function WhatsAppCopilot() {
   const isCopilotOpen = useAgriStore((s) => s.isCopilotOpen);
   const chatMessages = useAgriStore((s) => s.chatMessages);
   const paddocks = useAgriStore((s) => s.paddocks);
+  const crops = useAgriStore((s) => s.crops);
   const toggleCopilot = useAgriStore((s) => s.toggleCopilot);
   const addChatMessage = useAgriStore((s) => s.addChatMessage);
   const addActivity = useAgriStore((s) => s.addActivity);
   const updatePaddockNDVI = useAgriStore((s) => s.updatePaddockNDVI);
   const user = useAgriStore((s) => s.user);
   const setAuthModalOpen = useAgriStore((s) => s.setAuthModalOpen);
-  const partialAction = useAgriStore((s) => s.partialAction);
   const setPartialAction = useAgriStore((s) => s.setPartialAction);
 
   const [inputValue, setInputValue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -127,28 +129,38 @@ export default function WhatsAppCopilot() {
   // ── NLP Engine ────────────────────────────────────────────────────────
 
   const processInput = useCallback(
-    (input: string) => {
+    async (input: string) => {
       // 1. Add user message
       addChatMessage({ role: 'user', content: input });
 
       // 2. Add processing placeholder
       addChatMessage({
         role: 'assistant',
-        content: 'El asistente está procesando...',
+        content: isGeminiConfigured ? 'agroCopilot está pensando... 🤖' : 'Procesando...',
         isProcessing: true,
       });
       setIsProcessing(true);
 
-      // 3. Simulate network delay (1000-1500ms)
-      const delay = 1000 + Math.random() * 500;
+      try {
+        const currentState = useAgriStore.getState();
+        const inventory = currentState.inventory;
+        const currentChatHistory = currentState.chatMessages;
+        const currentPartialAction = currentState.partialAction;
 
-      setTimeout(() => {
-        const currentMessages = useAgriStore.getState().chatMessages;
-        const filtered = currentMessages.filter((m) => !(m.isProcessing === true));
+        // Llamar a Gemini (o fallback regex automático)
+        const result = await processWithGemini(
+          input,
+          currentChatHistory,
+          paddocks,
+          inventory,
+          crops,
+          currentPartialAction
+        );
+
+        // Remover placeholder de procesamiento
+        const messagesAfterProcess = useAgriStore.getState().chatMessages;
+        const filtered = messagesAfterProcess.filter((m) => !(m.isProcessing === true));
         useAgriStore.setState({ chatMessages: filtered });
-
-        const inventory = useAgriStore.getState().inventory;
-        const result = processNaturalLanguage(input, paddocks, inventory, partialAction);
 
         if (result.message === 'INVENTORY_REQUEST') {
           const belowMin = inventory.filter((item) => item.currentStock < item.minimumStock);
@@ -180,11 +192,22 @@ export default function WhatsAppCopilot() {
           });
           setPartialAction(result.nextPartialAction !== undefined ? result.nextPartialAction : null);
         }
-        
+      } catch (error) {
+        console.error('[agroCopilot] Error en processInput:', error);
+        // Remover placeholder
+        const messagesAfterError = useAgriStore.getState().chatMessages;
+        const filtered = messagesAfterError.filter((m) => !(m.isProcessing === true));
+        useAgriStore.setState({ chatMessages: filtered });
+
+        addChatMessage({
+          role: 'assistant',
+          content: '❌ Hubo un error al procesar tu mensaje. Por favor, intentá de nuevo.',
+        });
+      } finally {
         setIsProcessing(false);
-      }, delay);
+      }
     },
-    [addChatMessage, paddocks, partialAction, setPartialAction]
+    [addChatMessage, paddocks, crops, setPartialAction]
   );
 
   // ── Submit Handler ────────────────────────────────────────────────────
@@ -238,11 +261,25 @@ export default function WhatsAppCopilot() {
             <Leaf className="h-5 w-5 text-white" />
           </div>
           <div className="flex-1">
-            <h2 className="text-sm font-bold text-white">agroCopilot AI</h2>
+            <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
+              agroCopilot AI
+              {isGeminiConfigured && (
+                <span className="inline-flex items-center gap-0.5 rounded bg-emerald-500/40 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-200 border border-emerald-400/40 shadow-sm animate-pulse">
+                  Gemini Activo 🤖
+                </span>
+              )}
+            </h2>
             <p className="text-xs text-emerald-100">
               Asistente Agrícola Inteligente
             </p>
           </div>
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"
+            title="Ajustes de agroCopilot AI"
+          >
+            <Settings className="h-4.5 w-4.5" />
+          </button>
           <button
             onClick={toggleCopilot}
             className="flex h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"
@@ -399,6 +436,11 @@ export default function WhatsAppCopilot() {
           </div>
         </div>
       </div>
+
+      <AISettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+      />
     </>
   );
 }

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   LayoutDashboard,
   Map,
@@ -11,6 +12,7 @@ import {
   LogOut,
   Sparkles,
   Loader2,
+  Shield,
 } from 'lucide-react';
 import { useAgriStore } from '../../store/useAgriStore';
 import { cn } from '../../lib/utils';
@@ -24,6 +26,8 @@ const viewMeta: Record<AppView, { label: string; icon: React.ElementType }> = {
   inventory: { label: 'Pañol de Insumos', icon: Warehouse },
 };
 
+import PermissionManagerModal from '../settings/PermissionManagerModal';
+
 export default function Topbar() {
   const currentView = useAgriStore((s) => s.currentView);
   const farms = useAgriStore((s) => s.farms);
@@ -31,6 +35,9 @@ export default function Topbar() {
   const inventory = useAgriStore((s) => s.inventory);
   const isCopilotOpen = useAgriStore((s) => s.isCopilotOpen);
   const toggleCopilot = useAgriStore((s) => s.toggleCopilot);
+
+  const userRole = useAgriStore((s) => s.userRole);
+  const [isPermissionsOpen, setIsPermissionsOpen] = useState(false);
 
   // Supabase states
   const supabaseStatus = useAgriStore((s) => s.supabaseStatus);
@@ -49,7 +56,8 @@ export default function Topbar() {
   ).length;
 
   return (
-    <header
+    <>
+      <header
       className={cn(
         'flex items-center justify-between h-16 px-6',
         'bg-white/80 backdrop-blur-md',
@@ -158,6 +166,22 @@ export default function Topbar() {
           )}
         </div>
 
+        {/* Permission Manager Trigger Button */}
+        {userRole === 'owner' && (
+          <button
+            onClick={() => setIsPermissionsOpen(true)}
+            className={cn(
+              'relative flex items-center justify-center w-9 h-9 rounded-xl',
+              'text-slate-500 hover:text-slate-700',
+              'hover:bg-slate-100 transition-colors duration-200',
+              'focus:outline-none focus:ring-2 focus:ring-emerald-500/30'
+            )}
+            title="Administrar Permisos de Usuarios"
+          >
+            <Shield className="w-[18px] h-[18px] text-emerald-600" strokeWidth={2} />
+          </button>
+        )}
+
         {/* Separator */}
         <div className="w-px h-6 bg-slate-200" />
 
@@ -213,5 +237,11 @@ export default function Topbar() {
         </button>
       </div>
     </header>
+
+    <PermissionManagerModal
+      isOpen={isPermissionsOpen}
+      onClose={() => setIsPermissionsOpen(false)}
+    />
+  </>
   );
 }
