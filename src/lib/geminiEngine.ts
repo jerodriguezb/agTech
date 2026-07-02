@@ -256,7 +256,7 @@ export async function processWithGemini(
 
   try {
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -274,15 +274,28 @@ export async function processWithGemini(
     // Construir system prompt con datos actuales de la BD
     const systemPrompt = buildSystemPrompt(paddocks, inventory, crops, customPrompt);
 
-    // Construir historial de conversación (últimos 20 mensajes para contexto)
-    const recentMessages = chatHistory
-      .filter(m => m.role !== 'system' && !m.isProcessing)
-      .slice(-20);
+    // Filtrar mensajes del sistema y placeholders de procesamiento
+    const chatHistoryClean = chatHistory.filter(m => m.role !== 'system' && !m.isProcessing);
 
-    const geminiHistory = recentMessages.map(m => ({
+    // Obtener los mensajes pasados (excluyendo el mensaje actual que vamos a enviar en sendMessage)
+    const pastMessages = chatHistoryClean.slice(0, -1);
+
+    // Asegurar que el historial comience con un mensaje de tipo 'user'
+    let firstUserIndex = pastMessages.findIndex(m => m.role === 'user');
+    const validPastMessages = firstUserIndex !== -1 ? pastMessages.slice(firstUserIndex) : [];
+
+    // Tomar los últimos 20 mensajes del historial válido
+    const recentPastMessages = validPastMessages.slice(-20);
+
+    const geminiHistory = recentPastMessages.map(m => ({
       role: m.role === 'user' ? 'user' as const : 'model' as const,
       parts: [{ text: m.content }],
     }));
+
+    console.log('[agroCopilot] Input:', userMessage);
+    console.log('[agroCopilot] Clean history:', chatHistoryClean);
+    console.log('[agroCopilot] Past messages:', pastMessages);
+    console.log('[agroCopilot] Gemini history:', geminiHistory);
 
     // Crear chat con historial
     const chat = model.startChat({
