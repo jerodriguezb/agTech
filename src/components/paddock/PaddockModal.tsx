@@ -16,6 +16,7 @@ export default function PaddockModal({ isOpen, onClose, onSave, editingPaddock }
   const [name, setName] = useState('');
   const [cropId, setCropId] = useState('');
   const [ndvi, setNdvi] = useState<number>(0.5);
+  const [area, setArea] = useState<string>('');
   const [geojsonInput, setGeojsonInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [geoError, setGeoError] = useState('');
@@ -25,12 +26,14 @@ export default function PaddockModal({ isOpen, onClose, onSave, editingPaddock }
       setName(editingPaddock.name);
       setCropId(editingPaddock.cropId || '');
       setNdvi(editingPaddock.ndvi);
+      setArea(editingPaddock.area.toString());
       setGeojsonInput('');
       setGeoError('');
     } else {
       setName('');
       setCropId('');
       setNdvi(0.5);
+      setArea('');
       setGeojsonInput('');
       setGeoError('');
     }
@@ -82,6 +85,7 @@ export default function PaddockModal({ isOpen, onClose, onSave, editingPaddock }
           name,
           cropId: cropId || null,
           ndvi: Number(ndvi),
+          area: area ? parseFloat(area) : undefined,
           coordinates: parsedGeojson,
         },
         parsedGeojson
@@ -131,26 +135,42 @@ export default function PaddockModal({ isOpen, onClose, onSave, editingPaddock }
               />
             </div>
 
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Cultivo Asignado
+              </label>
+              <div className="relative">
+                <select
+                  value={cropId}
+                  onChange={(e) => setCropId(e.target.value)}
+                  className="w-full appearance-none rounded-xl border-gray-300 pl-10 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
+                >
+                  <option value="">Ninguno (Barbecho)</option>
+                  {crops.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.variety})
+                    </option>
+                  ))}
+                </select>
+                <Wheat className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                  Cultivo Asignado
+                  Superficie (Hectáreas)
                 </label>
-                <div className="relative">
-                  <select
-                    value={cropId}
-                    onChange={(e) => setCropId(e.target.value)}
-                    className="w-full appearance-none rounded-xl border-gray-300 pl-10 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
-                  >
-                    <option value="">Ninguno (Barbecho)</option>
-                    {crops.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.variety})
-                      </option>
-                    ))}
-                  </select>
-                  <Wheat className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
-                </div>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={area}
+                  onChange={(e) => setArea(e.target.value)}
+                  className="w-full rounded-xl border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
+                  placeholder="Ej. 150.50"
+                />
+                <p className="mt-1 text-[10px] text-gray-500">Opcional. Vacío = cálculo por mapa</p>
               </div>
 
               <div>

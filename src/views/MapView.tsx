@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet';
+import { MapContainer, TileLayer, GeoJSON, useMap } from 'react-leaflet';
 import type { PathOptions, Layer } from 'leaflet';
 import type { Feature, Geometry } from 'geojson';
 import { Wheat, Leaf, Layers } from 'lucide-react';
@@ -13,6 +13,45 @@ import {
   formatDate,
 } from '../lib/utils';
 import PaddockHistoryModal from '../components/paddock/PaddockHistoryModal';
+
+// Helper to extract Leaflet LatLng points from GeoJSON Geometry
+function getPointsFromGeometry(geom: any): [number, number][] {
+  if (!geom) return [];
+  const points: [number, number][] = [];
+  if (geom.type === 'Polygon') {
+    const rings = geom.coordinates || [];
+    rings.forEach((ring: any) => {
+      ring.forEach((pt: any) => {
+        if (Array.isArray(pt) && pt.length >= 2) {
+          points.push([pt[1], pt[0]]); // GeoJSON is [lng, lat] -> Leaflet is [lat, lng]
+        }
+      });
+    });
+  } else if (geom.type === 'MultiPolygon') {
+    const polygons = geom.coordinates || [];
+    polygons.forEach((poly: any) => {
+      poly.forEach((ring: any) => {
+        ring.forEach((pt: any) => {
+          if (Array.isArray(pt) && pt.length >= 2) {
+            points.push([pt[1], pt[0]]);
+          }
+        });
+      });
+    });
+  }
+  return points;
+}
+
+// Sub-component to dynamically adjust map view when bounds change
+function ChangeMapView({ bounds }: { bounds: [[number, number], [number, number]] | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (bounds) {
+      map.fitBounds(bounds, { padding: [50, 50] });
+    }
+  }, [bounds, map]);
+  return null;
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type MapMode = 'crop' | 'ndvi';
@@ -95,6 +134,32 @@ export default function MapView() {
       };
     });
   }, [paddocks, cropById]);
+
+  // Calculate map bounds to auto-fit paddocks
+  const mapBounds = useMemo<[[number, number], [number, number]] | null>(() => {
+    let allPoints: [number, number][] = [];
+    paddocks.forEach((p) => {
+      allPoints = allPoints.concat(getPointsFromGeometry(p.coordinates));
+    });
+    if (allPoints.length === 0) return null;
+
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+    let minLng = Infinity;
+    let maxLng = -Infinity;
+
+    allPoints.forEach(([lat, lng]) => {
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+    });
+
+    return [
+      [minLat, minLng],
+      [maxLat, maxLng],
+    ];
+  }, [paddocks]);
 
   // Style function — depends on mapMode
   const styleFn = useCallback(
@@ -208,6 +273,9 @@ export default function MapView() {
         className="h-full min-h-[calc(100vh-4rem)] w-full"
         zoomControl={true}
       >
+        {/* Auto-center map to fit paddocks */}
+        <ChangeMapView bounds={mapBounds} />
+
         {/* Satellite base layer */}
         <TileLayer
           url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"

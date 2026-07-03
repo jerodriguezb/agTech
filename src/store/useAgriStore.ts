@@ -1010,7 +1010,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       const newPaddock: Paddock = {
         ...paddockData,
         id: generateId(),
-        area: 10, // Simulated area
+        area: paddockData.area || 10, // Simulated area
         lastUpdated: new Date().toISOString(),
       };
       set((s) => {
@@ -1029,6 +1029,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           p_name: paddockData.name,
           p_crop_id: paddockData.cropId,
           p_boundary_geojson: paddockData.coordinates,
+          p_area: paddockData.area || null,
         }
       );
 
@@ -1081,6 +1082,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       if (updates.name !== undefined) dbUpdates.name = updates.name;
       if (updates.cropId !== undefined) dbUpdates.crop_id = updates.cropId;
       if (updates.ndvi !== undefined) dbUpdates.ndvi = updates.ndvi;
+      if (updates.area !== undefined) dbUpdates.area = updates.area;
 
       const { error } = await supabase
         .from('paddocks')

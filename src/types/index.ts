@@ -257,7 +257,7 @@ export interface AgriActions {
   toggleCopilot: () => void;
 
   // Lotes (Paddocks)
-  addPaddock: (paddockData: Omit<Paddock, 'id' | 'area' | 'lastUpdated'>) => Promise<void>;
+  addPaddock: (paddockData: Omit<Paddock, 'id' | 'area' | 'lastUpdated'> & { area?: number }) => Promise<void>;
   updatePaddock: (id: ID, updates: Partial<Paddock>) => Promise<void>;
   deletePaddock: (id: ID) => Promise<void>;
   updatePaddockNDVI: (paddockId: ID, newNdvi: number) => Promise<void>;

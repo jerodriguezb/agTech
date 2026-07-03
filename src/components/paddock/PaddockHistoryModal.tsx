@@ -30,18 +30,18 @@ export default function PaddockHistoryModal({
   const paddock = paddocks.find((p) => p.id === paddockId);
   if (!paddock) return null;
 
-  // Filtrar actividades del lote (incluir lluvias generales que no tienen lote asignado o que caen en toda la granja, pero para simplificar, mostramos las directas)
+  // Filtrar actividades del lote (incluir lluvias generales que no tienen lote asignado, pero excluir lluvias específicas de otros lotes)
   const paddockActivities = activities
-    .filter((a) => a.paddockId === paddockId || a.type === 'Lluvia')
+    .filter((a) => a.paddockId === paddockId || (a.type === 'Lluvia' && !a.paddockId))
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   return (
     <>
       <div
-        className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
+        className="fixed inset-0 z-[2000] bg-black/30 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 p-4">
+      <div className="fixed left-1/2 top-1/2 z-[2000] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 p-4">
         <div className="flex max-h-[85vh] flex-col rounded-2xl bg-white shadow-2xl">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
