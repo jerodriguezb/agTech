@@ -13,6 +13,7 @@ import {
   Sparkles,
   Loader2,
   Shield,
+  Sprout,
 } from 'lucide-react';
 import { useAgriStore } from '../../store/useAgriStore';
 import { cn } from '../../lib/utils';
@@ -27,6 +28,8 @@ const viewMeta: Record<AppView, { label: string; icon: React.ElementType }> = {
 };
 
 import PermissionManagerModal from '../settings/PermissionManagerModal';
+import CampaignManagerModal from '../settings/CampaignManagerModal';
+import CropManagerModal from '../settings/CropManagerModal';
 
 export default function Topbar() {
   const currentView = useAgriStore((s) => s.currentView);
@@ -36,8 +39,14 @@ export default function Topbar() {
   const isCopilotOpen = useAgriStore((s) => s.isCopilotOpen);
   const toggleCopilot = useAgriStore((s) => s.toggleCopilot);
 
+  const campaigns = useAgriStore((s) => s.campaigns);
+  const activeCampaignId = useAgriStore((s) => s.activeCampaignId);
+  const setActiveCampaign = useAgriStore((s) => s.setActiveCampaign);
+
   const userRole = useAgriStore((s) => s.userRole);
   const [isPermissionsOpen, setIsPermissionsOpen] = useState(false);
+  const [isCampaignsOpen, setIsCampaignsOpen] = useState(false);
+  const [isCropsOpen, setIsCropsOpen] = useState(false);
 
   // Supabase states
   const supabaseStatus = useAgriStore((s) => s.supabaseStatus);
@@ -99,6 +108,36 @@ export default function Topbar() {
           <span className="text-xs text-slate-400 font-medium">
             — {currentFarm.location}
           </span>
+        )}
+
+        {/* Campaign Selector */}
+        {!isLoading && (
+          <div className="ml-4 flex items-center gap-2">
+            {campaigns.length > 0 ? (
+              <select
+                value={activeCampaignId || ''}
+                onChange={(e) => setActiveCampaign(e.target.value)}
+                className="text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg px-2 py-1.5 outline-none cursor-pointer hover:bg-emerald-100 transition-colors"
+              >
+                <option value="" disabled>Seleccionar Campaña</option>
+                {campaigns.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            ) : (
+              <span className="text-xs font-semibold text-slate-400 bg-slate-100 px-2 py-1.5 rounded-lg border border-slate-200">
+                Sin campañas
+              </span>
+            )}
+            
+            <button
+              onClick={() => setIsCampaignsOpen(true)}
+              className="text-slate-400 hover:text-emerald-600 bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-200 p-1 rounded-lg transition-colors"
+              title="Gestionar Campañas"
+            >
+              <Database className="h-4 w-4" />
+            </button>
+          </div>
         )}
       </div>
 
@@ -182,6 +221,22 @@ export default function Topbar() {
           </button>
         )}
 
+        {/* Crop Manager Trigger Button */}
+        {user && (
+          <button
+            onClick={() => setIsCropsOpen(true)}
+            className={cn(
+              'relative flex items-center justify-center w-9 h-9 rounded-xl',
+              'text-slate-500 hover:text-slate-700',
+              'hover:bg-slate-100 transition-colors duration-200',
+              'focus:outline-none focus:ring-2 focus:ring-emerald-500/30'
+            )}
+            title="Administrar Catálogo de Cultivos"
+          >
+            <Sprout className="w-[18px] h-[18px] text-emerald-600" strokeWidth={2} />
+          </button>
+        )}
+
         {/* Separator */}
         <div className="w-px h-6 bg-slate-200" />
 
@@ -241,6 +296,14 @@ export default function Topbar() {
     <PermissionManagerModal
       isOpen={isPermissionsOpen}
       onClose={() => setIsPermissionsOpen(false)}
+    />
+    <CampaignManagerModal
+      isOpen={isCampaignsOpen}
+      onClose={() => setIsCampaignsOpen(false)}
+    />
+    <CropManagerModal
+      isOpen={isCropsOpen}
+      onClose={() => setIsCropsOpen(false)}
     />
   </>
   );

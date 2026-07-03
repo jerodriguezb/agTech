@@ -21,11 +21,14 @@ export default function PaddockManagerModal({ isOpen, onClose }: PaddockManagerM
 
   if (!isOpen) return null;
 
-  const handleSavePaddock = async (data: Partial<Paddock>) => {
+  const handleSavePaddock = async (data: Partial<Paddock>, geojson?: any) => {
     if (editingPaddock) {
       await updatePaddock(editingPaddock.id, data);
     } else {
-      await addPaddock(data as any);
+      await addPaddock({
+        ...data,
+        coordinates: geojson
+      } as any);
     }
   };
 

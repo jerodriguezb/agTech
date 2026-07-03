@@ -13,6 +13,9 @@ interface PaddockModalProps {
 export default function PaddockModal({ isOpen, onClose, onSave, editingPaddock }: PaddockModalProps) {
   const crops = useAgriStore((s) => s.crops);
   
+  const activeCampaignId = useAgriStore((s) => s.activeCampaignId);
+  const activeCampaign = useAgriStore((s) => s.campaigns.find(c => c.id === activeCampaignId));
+
   const [name, setName] = useState('');
   const [cropId, setCropId] = useState('');
   const [ndvi, setNdvi] = useState<number>(0.5);
@@ -26,7 +29,7 @@ export default function PaddockModal({ isOpen, onClose, onSave, editingPaddock }
       setName(editingPaddock.name);
       setCropId(editingPaddock.cropId || '');
       setNdvi(editingPaddock.ndvi);
-      setArea(editingPaddock.area.toString());
+      setArea(editingPaddock.area ? editingPaddock.area.toString() : '');
       setGeojsonInput('');
       setGeoError('');
     } else {
@@ -58,42 +61,39 @@ export default function PaddockModal({ isOpen, onClose, onSave, editingPaddock }
       try {
         const parsed = JSON.parse(geojsonInput);
         
-        // Extract geometry if the user pasted a FeatureCollection or Feature
-        if (parsed.type === 'FeatureCollection' && parsed.features?.length > 0) {
-          parsedGeojson = parsed.features[0].geometry;
+        let geometryObj = parsed;
+        if (parsed.type === 'FeatureCollection') {
+          if (parsed.features && parsed.features.length > 0) {
+            geometryObj = parsed.features[0].geometry;
+          } else {
+            throw new Error('El FeatureCollection no contiene ningún elemento.');
+          }
         } else if (parsed.type === 'Feature') {
-          parsedGeojson = parsed.geometry;
-        } else {
-          parsedGeojson = parsed;
+          geometryObj = parsed.geometry;
         }
 
-        if (!parsedGeojson || (parsedGeojson.type !== 'Polygon' && parsedGeojson.type !== 'MultiPolygon')) {
-          setGeoError('El GeoJSON debe contener al menos un Polygon o MultiPolygon.');
-          setIsSubmitting(false);
-          return;
+        if (!geometryObj || !geometryObj.type || (geometryObj.type !== 'Polygon' && geometryObj.type !== 'MultiPolygon')) {
+          throw new Error('El GeoJSON debe contener un polígono válido (Polygon o MultiPolygon).');
         }
-      } catch (err) {
-        setGeoError('GeoJSON inválido. Verifica el formato.');
+
+        parsedGeojson = geometryObj;
+      } catch (err: any) {
+        setGeoError(err.message || 'El formato del GeoJSON es inválido.');
         setIsSubmitting(false);
         return;
       }
     }
 
     try {
-      await onSave(
-        {
-          name,
-          cropId: cropId || null,
-          ndvi: Number(ndvi),
-          area: area ? parseFloat(area) : undefined,
-          coordinates: parsedGeojson,
-        },
-        parsedGeojson
-      );
+      await onSave({
+        name,
+        cropId: cropId || undefined,
+        ndvi,
+        area: area ? Number(area) : undefined,
+      }, parsedGeojson);
       onClose();
-    } catch (err: any) {
-      console.error('Error saving paddock:', err);
-      setGeoError(err?.message || 'Error al guardar el lote en la base de datos.');
+    } catch (error) {
+      console.error('Failed to save paddock:', error);
     } finally {
       setIsSubmitting(false);
     }
@@ -136,8 +136,13 @@ export default function PaddockModal({ isOpen, onClose, onSave, editingPaddock }
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              <label className="mb-1.5 flex items-center gap-2 text-sm font-medium text-gray-700">
                 Cultivo Asignado
+                {activeCampaign && (
+                  <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                    {activeCampaign.name}
+                  </span>
+                )}
               </label>
               <div className="relative">
                 <select

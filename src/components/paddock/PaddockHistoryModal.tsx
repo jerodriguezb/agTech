@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { X, Calendar, Droplets, Activity as ActivityIcon } from 'lucide-react';
 import { useAgriStore } from '../../store/useAgriStore';
 import { cn, formatDate } from '../../lib/utils';
@@ -24,24 +25,33 @@ export default function PaddockHistoryModal({
 }: PaddockHistoryModalProps) {
   const paddocks = useAgriStore((s) => s.paddocks);
   const activities = useAgriStore((s) => s.activities);
+  const activeCampaignId = useAgriStore((s) => s.activeCampaignId);
 
   if (!isOpen || !paddockId) return null;
 
   const paddock = paddocks.find((p) => p.id === paddockId);
   if (!paddock) return null;
 
-  // Filtrar actividades del lote (incluir lluvias generales que no tienen lote asignado, pero excluir lluvias específicas de otros lotes)
+  // Filtrar actividades del lote:
+  // 1. Debe pertenecer a la campaña activa (o si es una lluvia general)
+  // 2. Debe ser del lote seleccionado o ser una lluvia general sin lote
   const paddockActivities = activities
-    .filter((a) => a.paddockId === paddockId || (a.type === 'Lluvia' && !a.paddockId))
+    .filter((a) => {
+      const isCurrentCampaign = a.campaignId === activeCampaignId;
+      const isThisPaddock = a.paddockId === paddockId;
+      const isGeneralRain = a.type === 'Lluvia' && !a.paddockId;
+      
+      return (isCurrentCampaign || isGeneralRain) && (isThisPaddock || isGeneralRain);
+    })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  return (
+  return createPortal(
     <>
       <div
-        className="fixed inset-0 z-[2000] bg-black/30 backdrop-blur-sm"
+        className="fixed inset-0 z-[9999] bg-black/40 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className="fixed left-1/2 top-1/2 z-[2000] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 p-4">
+      <div className="fixed left-1/2 top-1/2 z-[10000] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 p-4">
         <div className="flex max-h-[85vh] flex-col rounded-2xl bg-white shadow-2xl">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
@@ -123,6 +133,7 @@ export default function PaddockHistoryModal({
           </div>
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 }

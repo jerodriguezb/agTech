@@ -295,6 +295,7 @@ export default function MapView() {
           style={styleFn}
           onEachFeature={onEachFeature}
         />
+        <ChangeMapView bounds={mapBounds} />
       </MapContainer>
 
       {/* ─ Mode Selector (top-right) ──────────────────────────────── */}

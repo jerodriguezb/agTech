@@ -10,6 +10,7 @@ ALTER TABLE public.activities ADD COLUMN IF NOT EXISTS applied_area NUMERIC;
 -- ============================================================================
 -- 2. Modificación de la Vista de Actividades para incluir el nuevo campo
 -- ============================================================================
+DROP VIEW IF EXISTS public.v_activities CASCADE;
 
 CREATE OR REPLACE VIEW public.v_activities AS
 SELECT 

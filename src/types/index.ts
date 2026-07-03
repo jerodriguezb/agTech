@@ -68,6 +68,7 @@ export interface Paddock {
   ndvi: number; // Índice de Vegetación de Diferencia Normalizada [-1.0, 1.0]
   coordinates: PaddockGeometry;
   soilType?: string;
+  yieldKgHa?: number | null;
   lastUpdated: ISOString;
 }
 
@@ -83,6 +84,8 @@ export interface Crop {
   plantingDate: ISOString | null;
   expectedHarvestDate: ISOString | null;
   cycleLength: number; // días
+  targetNdvi: number; // NDVI Objetivo [0.0, 1.0]
+  marketPriceUsdTon?: number; // Precio de venta objetivo (USD/Ton)
 }
 
 /**
@@ -134,12 +137,37 @@ export interface ActivityInput {
 }
 
 /**
+ * Campaign — Ciclo productivo temporal (Campaña Agrícola).
+ */
+export interface Campaign {
+  id: ID;
+  farmId: ID;
+  name: string;
+  startDate: ISOString;
+  endDate: ISOString;
+  isActive: boolean;
+}
+
+/**
+ * PaddockCampaign — Relación entre Lote y Campaña con su cultivo asignado.
+ */
+export interface PaddockCampaign {
+  id: ID;
+  paddockId: ID;
+  campaignId: ID;
+  cropId: ID | null;
+  yieldKgHa?: number;
+}
+
+/**
  * Activity — Registro transaccional del libro mayor de operaciones.
  * Contiene metadatos, responsable, insumos consumidos y notas.
  */
 export interface Activity {
   id: ID;
   farmId: ID;
+  campaignId?: ID | null;
+  cropId?: ID | null;
   paddockId: ID | null;
   activityTypeId?: ID | null;
   type: string; // Nombre resuelto o legacy
@@ -152,6 +180,7 @@ export interface Activity {
   notes: string;
   rainfallMm?: number; // solo para tipo 'Lluvia'
   appliedArea?: number; // Hectáreas reales trabajadas si fue labor parcial
+  serviceCostPerHa?: number; // Costo operativo / contratista (USD/ha)
   createdAt: ISOString;
 }
 
@@ -161,12 +190,14 @@ export interface Activity {
 export interface PendingActivity {
   type: string;
   paddockId?: ID | null;
+  cropId?: ID | null;
   date: ISOString;
   rainfallMm?: number;
   ndviValue?: number;
   notes: string;
   inputsConsumed: ActivityInput[];
   appliedArea?: number;
+  serviceCostPerHa?: number;
   inputsAsked?: boolean;
   paddockOptions?: string[];
 }
@@ -208,6 +239,7 @@ export interface ChatMessage {
 export interface AgriState {
   // Datos del dominio
   farms: Farm[];
+  campaigns: Campaign[];
   paddocks: Paddock[];
   crops: Crop[];
   inventory: InventoryItem[];
@@ -217,6 +249,7 @@ export interface AgriState {
 
   // Estado de UI y Carga
   currentFarmId: ID;
+  activeCampaignId: ID | null; // La campaña actualmente seleccionada en el sistema
   currentView: AppView;
   isSidebarCollapsed: boolean;
   isCopilotOpen: boolean;
@@ -252,6 +285,7 @@ export interface AgriActions {
 
   // Modificadores de UI
   setCurrentFarm: (id: ID) => void;
+  setActiveCampaign: (id: ID | null) => void;
   setCurrentView: (view: AppView) => void;
   toggleSidebar: () => void;
   toggleCopilot: () => void;
@@ -261,6 +295,8 @@ export interface AgriActions {
   updatePaddock: (id: ID, updates: Partial<Paddock>) => Promise<void>;
   deletePaddock: (id: ID) => Promise<void>;
   updatePaddockNDVI: (paddockId: ID, newNdvi: number) => Promise<void>;
+  assignCropToPaddock: (paddockId: ID, cropId: ID) => Promise<void>;
+  recordPaddockYield: (paddockId: ID, yieldKgHa: number) => Promise<void>;
 
   // Pañol (Inventory)
   addInventoryItem: (item: Omit<InventoryItem, 'id' | 'lastRestocked'>) => Promise<void>;
@@ -296,6 +332,11 @@ export interface AgriActions {
   addFarmUser: (email: string, role: UserRole) => Promise<void>;
   updateFarmUser: (id: ID, role: UserRole) => Promise<void>;
   deleteFarmUser: (id: ID) => Promise<void>;
+
+  // Cultivos (Crops)
+  addCrop: (crop: Omit<Crop, 'id'>) => Promise<void>;
+  updateCrop: (id: ID, crop: Partial<Crop>) => Promise<void>;
+  deleteCrop: (id: ID) => Promise<void>;
 }
 
 export type AgriStore = AgriState & AgriActions;

@@ -42,6 +42,7 @@ const clearLocalStorage = () => {
 export const useAgriStore = create<AgriStore>((set, get) => ({
   // ─── Estado Inicial del Dominio ────────────────────────────────────
   farms: [mockFarm],
+  campaigns: [],
   paddocks: [...mockPaddocks],
   crops: [...mockCrops],
   inventory: [...mockInventory],
@@ -51,6 +52,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
 
   // ─── Estado de UI y Carga ──────────────────────────────────────────
   currentFarmId: mockFarm.id,
+  activeCampaignId: null,
   currentView: 'dashboard' as AppView,
   isSidebarCollapsed: false,
   isCopilotOpen: false,
@@ -178,7 +180,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       const farmId = activeFarm.id;
 
       // 3. Consultas paralelas para el establecimiento seleccionado
-      const [cropsRes, paddocksRes, inventoryRes, activitiesRes, chatRes, staffRes, typesRes, settingsRes, userRoleRes, farmUsersRes] =
+      const [cropsRes, paddocksRes, inventoryRes, activitiesRes, chatRes, staffRes, typesRes, settingsRes, userRoleRes, farmUsersRes, campaignsRes] =
         await Promise.all([
           supabase.from('crops').select('*'),
           supabase.from('v_paddocks').select('*').eq('farm_id', farmId),
@@ -198,6 +200,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           supabase.from('farm_ai_settings').select('*').eq('farm_id', farmId).maybeSingle(),
           supabase.from('farm_users').select('*').eq('farm_id', farmId).eq('user_id', userId).maybeSingle(),
           supabase.from('farm_users').select('*').eq('farm_id', farmId),
+          supabase.from('campaigns').select('*').eq('farm_id', farmId),
         ]);
 
       if (cropsRes.error) throw cropsRes.error;
@@ -226,6 +229,8 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         plantingDate: null,
         expectedHarvestDate: null,
         cycleLength: 120,
+        targetNdvi: Number(c.target_ndvi || 0.5),
+        marketPriceUsdTon: c.market_price_usd_ton ? Number(c.market_price_usd_ton) : undefined,
       }));
 
       const mappedPaddocks = (paddocksRes.data || []).map((p: any) => ({
@@ -235,6 +240,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         area: Number(p.area),
         cropId: p.crop_id,
         ndvi: Number(p.ndvi || 0),
+        yieldKgHa: p.yield_kg_ha ? Number(p.yield_kg_ha) : null,
         coordinates: p.boundary, // GeoJSON JSONB procesado por la vista SQL
         lastUpdated: p.last_updated,
       }));
@@ -273,6 +279,8 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         return {
           id: a.id,
           farmId: a.farm_id,
+          campaignId: a.campaign_id,
+          cropId: a.crop_id,
           paddockId: a.paddock_id,
           activityTypeId: a.activity_type_id,
           type: typeMatch ? typeMatch.name : a.type,
@@ -284,6 +292,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           notes: a.notes || '',
           rainfallMm: a.rainfall_mm ? Number(a.rainfall_mm) : undefined,
           appliedArea: a.applied_area ? Number(a.applied_area) : undefined,
+          serviceCostPerHa: a.service_cost_per_ha ? Number(a.service_cost_per_ha) : undefined,
           createdAt: a.created_at,
           inputsConsumed: (a.activity_inputs || []).map((ai: any) => ({
             inventoryItemId: ai.inventory_item_id,
@@ -325,8 +334,20 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         createdAt: fu.created_at,
       }));
 
+      // Mapear campañas
+      const mappedCampaigns = (campaignsRes.data || []).map((c: any) => ({
+        id: c.id,
+        farmId: c.farm_id,
+        name: c.name,
+        startDate: c.start_date,
+        endDate: c.end_date,
+        isActive: c.is_active,
+      }));
+      const defaultActiveCampaign = mappedCampaigns.find(c => c.isActive)?.id || null;
+
       set({
         farms: mappedFarms,
+        campaigns: mappedCampaigns,
         crops: mappedCrops,
         paddocks: mappedPaddocks,
         inventory: mappedInventory,
@@ -335,6 +356,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         activityTypes: mappedTypes.length > 0 ? mappedTypes : mockActivityTypes,
         chatMessages: mappedChat.length > 0 ? mappedChat : [welcomeMessage],
         currentFarmId: farmId,
+        activeCampaignId: defaultActiveCampaign,
         supabaseStatus: 'connected',
         customSystemPrompt,
         customAliases,
@@ -449,6 +471,8 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       // 1. Insertar actividad principal
       const insertPayload = {
         farm_id: state.currentFarmId,
+        campaign_id: state.activeCampaignId || null,
+        crop_id: activityData.cropId || null,
         paddock_id: activityData.paddockId,
         activity_type_id: activityData.activityTypeId || null,
         type: activityData.type,
@@ -458,6 +482,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         notes: activityData.notes,
         rainfall_mm: activityData.rainfallMm,
         applied_area: activityData.appliedArea,
+        service_cost_per_ha: activityData.serviceCostPerHa,
       };
       console.log('[addActivity] INSERT payload:', JSON.stringify(insertPayload, null, 2));
 
@@ -522,6 +547,8 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         return {
           id: a.id,
           farmId: a.farm_id,
+          campaignId: a.campaign_id,
+          cropId: a.crop_id,
           paddockId: a.paddock_id,
           activityTypeId: a.activity_type_id,
           type: typeMatch ? typeMatch.name : a.type,
@@ -614,6 +641,8 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         return {
           id: a.id,
           farmId: a.farm_id,
+          campaignId: a.campaign_id,
+          cropId: a.crop_id,
           paddockId: a.paddock_id,
           activityTypeId: a.activity_type_id,
           type: typeMatch ? typeMatch.name : a.type,
@@ -686,6 +715,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       const { error: actError } = await supabase
         .from('activities')
         .update({
+          crop_id: activityData.cropId || null,
           paddock_id: activityData.paddockId,
           activity_type_id: activityData.activityTypeId || null,
           type: activityData.type,
@@ -695,6 +725,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           notes: activityData.notes,
           rainfall_mm: activityData.rainfallMm,
           applied_area: activityData.appliedArea,
+          service_cost_per_ha: activityData.serviceCostPerHa,
         })
         .eq('id', id);
 
@@ -754,6 +785,8 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         return {
           id: a.id,
           farmId: a.farm_id,
+          campaignId: a.campaign_id,
+          cropId: a.crop_id,
           paddockId: a.paddock_id,
           activityTypeId: a.activity_type_id,
           type: typeMatch ? typeMatch.name : a.type,
@@ -1027,8 +1060,8 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         {
           p_farm_id: state.currentFarmId,
           p_name: paddockData.name,
-          p_crop_id: paddockData.cropId,
-          p_boundary_geojson: paddockData.coordinates,
+          p_crop_id: paddockData.cropId || null,
+          p_boundary_geojson: paddockData.coordinates || null,
           p_area: paddockData.area || null,
         }
       );
@@ -1050,6 +1083,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         area: Number(p.area),
         cropId: p.crop_id,
         ndvi: Number(p.ndvi || 0),
+        yieldKgHa: p.yield_kg_ha ? Number(p.yield_kg_ha) : null,
         coordinates: p.boundary,
         lastUpdated: p.last_updated,
       }));
@@ -1135,6 +1169,10 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
 
   setCurrentFarm: (id: ID) => {
     set({ currentFarmId: id });
+  },
+
+  setActiveCampaign: (id: ID | null) => {
+    set({ activeCampaignId: id });
   },
 
   setCurrentView: (view: AppView) => {
@@ -1540,6 +1578,196 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       }));
     } catch (err) {
       console.error('Error deleting farm user:', err);
+      throw err;
+    }
+  },
+
+  addCrop: async (cropData) => {
+    const state = get();
+    if (state.supabaseStatus !== 'connected' || !supabase) {
+      const newCrop: Crop = {
+        id: generateId(),
+        ...cropData,
+      };
+      set((s) => {
+        const updated = [...s.crops, newCrop];
+        saveToLocalStorage('agrocopilot_crops', updated);
+        return { crops: updated };
+      });
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('crops')
+        .insert({
+          name: cropData.name,
+          type: cropData.variety,
+          color: cropData.color,
+          target_ndvi: cropData.targetNdvi,
+          market_price_usd_ton: cropData.marketPriceUsdTon,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      const newCrop: Crop = {
+        id: data.id,
+        name: data.name,
+        variety: data.type,
+        color: data.color,
+        plantingDate: null,
+        expectedHarvestDate: null,
+        cycleLength: 120,
+        targetNdvi: Number(data.target_ndvi || 0.5),
+        marketPriceUsdTon: data.market_price_usd_ton ? Number(data.market_price_usd_ton) : undefined,
+      };
+
+      set((s) => ({ crops: [...s.crops, newCrop] }));
+    } catch (err) {
+      console.error('Error adding crop:', err);
+      throw err;
+    }
+  },
+
+  updateCrop: async (id, cropData) => {
+    const state = get();
+    if (state.supabaseStatus !== 'connected' || !supabase) {
+      set((s) => {
+        const updated = s.crops.map((c) => (c.id === id ? { ...c, ...cropData } : c));
+        saveToLocalStorage('agrocopilot_crops', updated);
+        return { crops: updated };
+      });
+      return;
+    }
+
+    try {
+      const updatePayload: any = {};
+      if (cropData.name !== undefined) updatePayload.name = cropData.name;
+      if (cropData.variety !== undefined) updatePayload.type = cropData.variety;
+      if (cropData.color !== undefined) updatePayload.color = cropData.color;
+      if (cropData.targetNdvi !== undefined) updatePayload.target_ndvi = cropData.targetNdvi;
+      if (cropData.marketPriceUsdTon !== undefined) updatePayload.market_price_usd_ton = cropData.marketPriceUsdTon;
+
+      const { error } = await supabase
+        .from('crops')
+        .update(updatePayload)
+        .eq('id', id);
+
+      if (error) throw error;
+
+      set((s) => ({
+        crops: s.crops.map((c) => (c.id === id ? { ...c, ...cropData } : c)),
+      }));
+    } catch (err) {
+      console.error('Error updating crop:', err);
+      throw err;
+    }
+  },
+
+  assignCropToPaddock: async (paddockId: ID, cropId: ID) => {
+    const state = get();
+    if (!state.activeCampaignId) return;
+
+    if (state.supabaseStatus !== 'connected' || !supabase) {
+      set((s) => {
+        const updatedPaddocks = s.paddocks.map((pad) =>
+          pad.id === paddockId
+            ? { ...pad, cropId, lastUpdated: new Date().toISOString() }
+            : pad
+        );
+        saveToLocalStorage('agrocopilot_paddocks', updatedPaddocks);
+        return { paddocks: updatedPaddocks };
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase.rpc('set_paddock_campaign_crop', {
+        p_paddock_id: paddockId,
+        p_campaign_id: state.activeCampaignId,
+        p_crop_id: cropId,
+      });
+
+      if (error) throw error;
+
+      set((s) => ({
+        paddocks: s.paddocks.map((pad) =>
+          pad.id === paddockId
+            ? { ...pad, cropId, lastUpdated: new Date().toISOString() }
+            : pad
+        ),
+      }));
+    } catch (err) {
+      console.error('Error assigning crop to paddock:', err);
+      throw err;
+    }
+  },
+
+  recordPaddockYield: async (paddockId: ID, yieldKgHa: number) => {
+    const state = get();
+    if (!state.activeCampaignId) return;
+
+    if (state.supabaseStatus !== 'connected' || !supabase) {
+      set((s) => {
+        const updatedPaddocks = s.paddocks.map((pad) =>
+          pad.id === paddockId
+            ? { ...pad, yieldKgHa, lastUpdated: new Date().toISOString() }
+            : pad
+        );
+        saveToLocalStorage('agrocopilot_paddocks', updatedPaddocks);
+        return { paddocks: updatedPaddocks };
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase.rpc('set_paddock_campaign_yield', {
+        p_paddock_id: paddockId,
+        p_campaign_id: state.activeCampaignId,
+        p_yield_kg_ha: yieldKgHa,
+      });
+
+      if (error) throw error;
+
+      set((s) => ({
+        paddocks: s.paddocks.map((pad) =>
+          pad.id === paddockId
+            ? { ...pad, yieldKgHa, lastUpdated: new Date().toISOString() }
+            : pad
+        ),
+      }));
+    } catch (err) {
+      console.error('Error recording paddock yield:', err);
+      throw err;
+    }
+  },
+
+  deleteCrop: async (id) => {
+    const state = get();
+    if (state.supabaseStatus !== 'connected' || !supabase) {
+      set((s) => {
+        const updated = s.crops.filter((c) => c.id !== id);
+        saveToLocalStorage('agrocopilot_crops', updated);
+        return { crops: updated };
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('crops')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      set((s) => ({
+        crops: s.crops.filter((c) => c.id !== id),
+      }));
+    } catch (err) {
+      console.error('Error deleting crop:', err);
       throw err;
     }
   },

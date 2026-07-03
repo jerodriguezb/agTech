@@ -55,6 +55,9 @@ export default function FieldTasksView() {
   const activityTypes = useAgriStore((s) => s.activityTypes);
   const currentFarmId = useAgriStore((s) => s.currentFarmId);
   const deleteActivity = useAgriStore((s) => s.deleteActivity);
+  const crops = useAgriStore((s) => s.crops);
+  const assignCropToPaddock = useAgriStore((s) => s.assignCropToPaddock);
+  const recordPaddockYield = useAgriStore((s) => s.recordPaddockYield);
 
   const [activeFilter, setActiveFilter] = useState<string | 'Todas'>('Todas');
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
@@ -67,7 +70,10 @@ export default function FieldTasksView() {
   // Form states for manual activity registration
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activityTypeId, setActivityTypeId] = useState<string>('');
-  const [paddockId, setPaddockId] = useState<string>('');
+  const [paddockIds, setPaddockIds] = useState<string[]>(['general']);
+  const [cropId, setCropId] = useState<string>('');
+  const [appliedArea, setAppliedArea] = useState<string>('');
+  const [serviceCostPerHa, setServiceCostPerHa] = useState<string>('');
   const [date, setDate] = useState<string>(
     new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
       .toISOString()
@@ -147,7 +153,10 @@ export default function FieldTasksView() {
     const staffObj = staff.find((s) => `${s.firstName} ${s.lastName}`.trim() === activity.responsible || s.id === activity.staffId);
     
     setActivityTypeId(activity.activityTypeId || typeObj?.id || '');
-    setPaddockId(activity.paddockId || '');
+    setPaddockIds(activity.paddockId ? [activity.paddockId] : ['general']);
+    setCropId(activity.cropId || '');
+    setAppliedArea(activity.appliedArea?.toString() || '');
+    setServiceCostPerHa(activity.serviceCostPerHa?.toString() || '');
     
     const localDate = new Date(new Date(activity.date).getTime() - new Date(activity.date).getTimezoneOffset() * 60000)
       .toISOString()
@@ -170,7 +179,10 @@ export default function FieldTasksView() {
   const handleOpenRegisterModal = () => {
     setEditingActivity(null);
     setActivityTypeId('');
-    setPaddockId('');
+    setPaddockIds(['general']);
+    setCropId('');
+    setAppliedArea('');
+    setServiceCostPerHa('');
     setDate(
       new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
         .toISOString()
@@ -202,6 +214,44 @@ export default function FieldTasksView() {
     setLoading(true);
 
     try {
+      const targetPaddocks = paddockIds.includes('general') ? [null] : paddockIds;
+      const selectedType = activityTypes.find((t) => t.id === activityTypeId);
+
+      // Calcular área física total seleccionada
+      let totalSelectedArea = 0;
+      targetPaddocks.forEach(pid => {
+        if (pid) {
+          const pad = paddocks.find(p => p.id === pid);
+          if (pad) totalSelectedArea += pad.area;
+        }
+      });
+
+      // 1. Validación de Área Aplicada (Dura)
+      if (appliedArea && totalSelectedArea > 0) {
+        if (Number(appliedArea) > totalSelectedArea) {
+          throw new Error(`El área aplicada (${appliedArea} ha) no puede superar el área física total seleccionada (${totalSelectedArea} ha).`);
+        }
+      }
+
+      // 2. Advertencia de Doble Cultivo (Blanda) para el primer lote conflictivo
+      if (selectedType?.name === 'Siembra' && cropId) {
+        for (const pid of targetPaddocks) {
+          const pad = pid ? paddocks.find((p) => p.id === pid) : null;
+          if (pad?.cropId && pad.cropId !== cropId) {
+             const currentCrop = crops.find((c) => c.id === pad.cropId);
+             const newCrop = crops.find((c) => c.id === cropId);
+             const confirmChange = window.confirm(
+               `El lote ${pad.name} ya cuenta con ${currentCrop?.name} activo.\n\nRegistrar esta nueva siembra cambiará el cultivo a ${newCrop?.name} en el mapa.\n\n¿Deseás continuar?`
+             );
+             if (!confirmChange) {
+               setLoading(false);
+               return;
+             }
+             break; // Solo preguntar una vez
+          }
+        }
+      }
+
       // Validar stock de insumos
       for (const input of selectedInputs) {
         const invItem = inventory.find((i) => i.id === input.inventoryItemId);
@@ -233,28 +283,61 @@ export default function FieldTasksView() {
         };
       });
 
-      const selectedType = activityTypes.find(t => t.id === activityTypeId);
       const selectedStaff = staff.find(s => s.id === staffId);
 
-      const activityData = {
-        farmId: currentFarmId,
-        paddockId: paddockId || null,
-        activityTypeId: activityTypeId || null,
-        type: selectedType ? selectedType.name : '',
-        date: new Date(date).toISOString(),
-        staffId: staffId || null,
-        responsible: selectedStaff ? `${selectedStaff.firstName} ${selectedStaff.lastName}`.trim() : '',
-        notes,
-        rainfallMm: (selectedType?.name === 'Lluvia') && rainfallMm ? Number(rainfallMm) : undefined,
-        inputsConsumed: inputs,
-      };
+      for (const pid of targetPaddocks) {
+        const pad = pid ? paddocks.find((p) => p.id === pid) : null;
+        
+        // Calcular proporción de este lote respecto al total seleccionado
+        // Si no hay lotes o el área es 0, dividimos en partes iguales.
+        const proportion = pad && totalSelectedArea > 0 
+          ? pad.area / totalSelectedArea 
+          : 1 / targetPaddocks.length;
+        
+        const splitInputs = inputs.map(input => ({
+          ...input,
+          quantity: Number((input.quantity * proportion).toFixed(2))
+        }));
+        
+        const splitAppliedArea = appliedArea && pad && totalSelectedArea > 0 
+          ? Number((Number(appliedArea) * proportion).toFixed(2)) 
+          : (appliedArea ? Number((Number(appliedArea) / targetPaddocks.length).toFixed(2)) : undefined);
 
-      if (editingActivity) {
-        const updateActivity = useAgriStore.getState().updateActivity;
-        await updateActivity(editingActivity.id, activityData);
-      } else {
-        const addActivity = useAgriStore.getState().addActivity;
-        await addActivity(activityData);
+        const activityData = {
+          farmId: currentFarmId,
+          paddockId: pid || null,
+          cropId: cropId || null,
+          activityTypeId: activityTypeId || null,
+          type: selectedType ? selectedType.name : '',
+          date: new Date(date).toISOString(),
+          staffId: staffId || null,
+          responsible: selectedStaff ? `${selectedStaff.firstName} ${selectedStaff.lastName}`.trim() : '',
+          notes,
+          rainfallMm: (selectedType?.name === 'Lluvia') && rainfallMm ? Number(rainfallMm) : undefined,
+          appliedArea: splitAppliedArea,
+          serviceCostPerHa: serviceCostPerHa ? Number(serviceCostPerHa) : undefined,
+          inputsConsumed: splitInputs,
+        };
+
+        if (editingActivity) {
+          const updateActivity = useAgriStore.getState().updateActivity;
+          await updateActivity(editingActivity.id, activityData);
+        } else {
+          const addActivity = useAgriStore.getState().addActivity;
+          await addActivity(activityData);
+        }
+
+        // Automatizaciones post-guardado por lote
+        if (pid) {
+          if (activityData.type === 'Siembra' && cropId) {
+            await assignCropToPaddock(pid, cropId);
+          } else if (activityData.type === 'Cosecha') {
+            const yieldInput = window.prompt(`Cosecha registrada en ${pad?.name || 'Lote'}.\n\nPor favor, ingresá el rendimiento promedio obtenido en kg/ha (opcional):`, '');
+            if (yieldInput && !isNaN(Number(yieldInput))) {
+              await recordPaddockYield(pid, Number(yieldInput));
+            }
+          }
+        }
       }
 
       // Reset Form and close modal
@@ -613,19 +696,108 @@ export default function FieldTasksView() {
                   <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
                     Lote
                   </label>
+                  <div className="w-full max-h-48 overflow-y-auto rounded-xl border border-gray-200 bg-white p-2">
+                    <label className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={paddockIds.includes('general')}
+                        disabled={loading || !!editingActivity}
+                        onChange={(e) => {
+                          if (e.target.checked) setPaddockIds(['general']);
+                          else setPaddockIds([]);
+                        }}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="text-sm font-medium text-slate-700">General (todo el campo)</span>
+                    </label>
+                    <div className="h-px w-full bg-slate-100 my-1"></div>
+                    {paddocks.map((p) => (
+                      <label key={p.id} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={paddockIds.includes(p.id)}
+                          disabled={loading || !!editingActivity}
+                          onChange={(e) => {
+                            let newIds = paddockIds.filter(id => id !== 'general');
+                            if (e.target.checked) {
+                              newIds.push(p.id);
+                            } else {
+                              newIds = newIds.filter(id => id !== p.id);
+                            }
+                            if (newIds.length === 0) newIds = ['general'];
+                            
+                            setPaddockIds(newIds);
+                            
+                            // Auto select crop if only 1 paddock is selected
+                            if (newIds.length === 1 && newIds[0] !== 'general') {
+                              const pad = paddocks.find(pad => pad.id === newIds[0]);
+                              if (pad?.cropId) setCropId(pad.cropId);
+                            }
+                          }}
+                          className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span className="text-sm text-slate-700">{p.name} ({p.area} ha)</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Cultivo Destino */}
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
+                    Cultivo Destino / Afectado
+                  </label>
                   <select
-                    value={paddockId}
+                    value={cropId}
                     disabled={loading}
-                    onChange={(e) => setPaddockId(e.target.value)}
+                    onChange={(e) => setCropId(e.target.value)}
                     className="w-full rounded-xl border border-gray-200 py-2.5 px-3 text-sm text-gray-800 outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:opacity-50"
                   >
-                    <option value="">General (todo el campo)</option>
-                    {paddocks.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.area} ha)
+                    <option value="">Ninguno / General</option>
+                    {crops.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.variety})
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Área Aplicada */}
+                {!paddockIds.includes('general') && (
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
+                      Área Trabajada Total (ha)
+                    </label>
+                    <input
+                      type="number"
+                      min="0.1"
+                      step="any"
+                      value={appliedArea}
+                      disabled={loading}
+                      onChange={(e) => setAppliedArea(e.target.value)}
+                      placeholder={`Máximo sugerido: ${
+                        paddockIds.reduce((acc, id) => acc + (paddocks.find(p => p.id === id)?.area || 0), 0)
+                      } ha`}
+                      className="w-full rounded-xl border border-gray-200 py-2 px-3 text-sm text-gray-800 outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:opacity-50"
+                    />
+                  </div>
+                )}
+
+                {/* Costo de Labor / Maquinaria */}
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
+                    Costo de Labor / Contratista (USD/ha) <span className="font-normal lowercase">(Opcional)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={serviceCostPerHa}
+                    disabled={loading}
+                    onChange={(e) => setServiceCostPerHa(e.target.value)}
+                    placeholder="Ej. 12.50"
+                    className="w-full rounded-xl border border-gray-200 py-2 px-3 text-sm text-gray-800 outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:opacity-50 bg-slate-50"
+                  />
                 </div>
 
                 {/* Responsable */}

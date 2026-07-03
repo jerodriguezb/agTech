@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   Activity as ActivityIcon,
   Droplets,
+  PieChart as PieChartIcon,
 } from 'lucide-react';
 import { parseISO, isThisMonth } from 'date-fns';
 import { useAgriStore } from '../store/useAgriStore';
@@ -198,6 +199,79 @@ export default function DashboardView() {
     return { cropSlices: slices, totalArea: total };
   }, [paddocks, crops]);
 
+  // ── Costs and Income by Crop (Gross Margin indicator) ───────────────────
+  const { costsByCrop, totalCosts, totalIncome } = useMemo(() => {
+    const cropMap = new Map<string, { name: string; cost: number; income: number; color: string }>();
+
+    for (const crop of crops) {
+      cropMap.set(crop.id, { name: crop.name, cost: 0, income: 0, color: crop.color });
+    }
+
+    const inventoryMap = new Map(inventory.map((i) => [i.id, i]));
+    let generalCost = 0;
+    let totalC = 0;
+    let totalI = 0;
+
+    // 1. Calcular Costos (Insumos + Servicios)
+    for (const activity of activities) {
+      let activityCost = 0;
+      
+      // Costo de insumos
+      for (const input of activity.inputsConsumed) {
+        const item = inventoryMap.get(input.inventoryItemId);
+        if (item) {
+          activityCost += input.quantity * item.unitCost;
+        }
+      }
+      
+      // Costo de labor (servicio)
+      if (activity.serviceCostPerHa && activity.appliedArea) {
+        activityCost += activity.serviceCostPerHa * activity.appliedArea;
+      }
+
+      if (activityCost > 0) {
+        totalC += activityCost;
+        if (activity.cropId && cropMap.has(activity.cropId)) {
+          cropMap.get(activity.cropId)!.cost += activityCost;
+        } else {
+          generalCost += activityCost;
+        }
+      }
+    }
+
+    // 2. Calcular Ingresos (Rinde * Area * Precio / 1000)
+    for (const paddock of paddocks) {
+      if (paddock.cropId && paddock.yieldKgHa && cropMap.has(paddock.cropId)) {
+        const crop = crops.find(c => c.id === paddock.cropId);
+        if (crop && crop.marketPriceUsdTon) {
+          const paddockIncome = paddock.area * paddock.yieldKgHa * (crop.marketPriceUsdTon / 1000);
+          cropMap.get(paddock.cropId)!.income += paddockIncome;
+          totalI += paddockIncome;
+        }
+      }
+    }
+
+    const slices = [];
+    for (const entry of cropMap.values()) {
+      if (entry.cost > 0 || entry.income > 0) {
+        slices.push({ 
+          name: entry.name, 
+          value: entry.cost, // Para la torta mostramos el costo
+          income: entry.income,
+          margin: entry.income - entry.cost,
+          color: entry.color 
+        });
+      }
+    }
+    if (generalCost > 0) {
+      slices.push({ name: 'Costos Generales', value: generalCost, income: 0, margin: -generalCost, color: '#94A3B8' });
+    }
+
+    slices.sort((a, b) => b.value - a.value);
+
+    return { costsByCrop: slices, totalCosts: totalC, totalIncome: totalI };
+  }, [activities, crops, inventory, paddocks]);
+
   // ── NDVI paddock cards – enriched with crop name ────────────────────────
   const enrichedPaddocks = useMemo(() => {
     const cropById = new Map<string, Crop>();
@@ -330,7 +404,7 @@ export default function DashboardView() {
       </div>
 
       {/* ─ Charts row ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Doughnut */}
         <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-black/5">
           <h2 className="mb-4 text-lg font-semibold text-gray-800">
@@ -371,6 +445,38 @@ export default function DashboardView() {
                 ha totales
               </text>
             </PieChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Finanzas por Cultivo (ComposedChart) */}
+        <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-black/5">
+          <h2 className="mb-4 text-lg font-semibold text-gray-800">
+            Margen Bruto por Cultivo
+          </h2>
+
+          <ResponsiveContainer width="100%" height={320}>
+            {totalCosts > 0 || totalIncome > 0 ? (
+              <ComposedChart data={costsByCrop} margin={{ top: 20, right: 0, bottom: 20, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                <YAxis tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                <Tooltip
+                  formatter={(value: number) => [`$${value.toLocaleString('en-US', { minimumFractionDigits: 0 })}`, '']}
+                  wrapperStyle={{ outline: 'none' }}
+                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                  labelStyle={{ fontWeight: 'bold', color: '#1E293B', marginBottom: '4px' }}
+                />
+                <Legend wrapperStyle={{ fontSize: '12px' }} />
+                <Bar dataKey="income" name="Ingresos (USD)" fill="#10B981" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                <Bar dataKey="value" name="Egresos (USD)" fill="#F43F5E" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                <Line type="monotone" dataKey="margin" name="Margen (USD)" stroke="#3B82F6" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} />
+              </ComposedChart>
+            ) : (
+              <div className="flex h-full w-full flex-col items-center justify-center text-gray-400">
+                <PieChartIcon className="mb-3 h-10 w-10 opacity-20" />
+                <p className="text-sm">No hay costos ni ingresos registrados.</p>
+              </div>
+            )}
           </ResponsiveContainer>
         </div>
 
