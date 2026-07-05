@@ -632,7 +632,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
   addTransaction: async (transactionData) => {
     const state = get();
     if (state.supabaseStatus !== 'connected' || !supabase) {
-      // Local fallback
+      // Local fallback (simplificado)
       const newTransaction = {
         ...transactionData,
         id: generateId(),
@@ -643,6 +643,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
     }
 
     try {
+      // 1. Insertar Transacción Principal
       const { data, error } = await supabase
         .from('financial_transactions')
         .insert([{
@@ -653,11 +654,71 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           cost_center_id: transactionData.costCenterId || null,
           amount: transactionData.amount,
           type: transactionData.type,
+          receipt_url: transactionData.receiptUrl || null,
         }])
         .select()
         .single();
 
       if (error) throw error;
+
+      // 2. Insertar Ítems y Calcular PPP si hay items
+      let finalItems = [];
+      if (transactionData.items && transactionData.items.length > 0) {
+        const itemsPayload = transactionData.items.map(item => ({
+          transaction_id: data.id,
+          inventory_item_id: item.inventoryItemId || null,
+          description: item.description,
+          quantity: item.quantity,
+          unit_price: item.unitPrice,
+          subtotal: item.subtotal,
+        }));
+
+        const { data: insertedItems, error: itemsError } = await supabase
+          .from('transaction_items')
+          .insert(itemsPayload)
+          .select();
+
+        if (itemsError) throw itemsError;
+
+        finalItems = insertedItems.map(item => ({
+          id: item.id,
+          transactionId: item.transaction_id,
+          inventoryItemId: item.inventory_item_id,
+          description: item.description,
+          quantity: Number(item.quantity),
+          unitPrice: Number(item.unit_price),
+          subtotal: Number(item.subtotal),
+        }));
+
+        // Actualizar Inventario y PPP
+        for (const item of transactionData.items) {
+          if (item.inventoryItemId) {
+            const currentItem = state.inventory.find(i => i.id === item.inventoryItemId);
+            if (currentItem) {
+              const currentStock = currentItem.currentStock;
+              const currentUnitCost = currentItem.unitCost || 0;
+              const currentTotalValue = currentStock * currentUnitCost;
+              
+              const purchasedQuantity = item.quantity;
+              const purchasedUnitCost = item.unitPrice;
+              const purchasedTotalValue = purchasedQuantity * purchasedUnitCost;
+              
+              const newTotalStock = currentStock + purchasedQuantity;
+              
+              // PPP (Precio Promedio Ponderado)
+              const newUnitCost = newTotalStock > 0 
+                ? (currentTotalValue + purchasedTotalValue) / newTotalStock 
+                : purchasedUnitCost;
+
+              await get().updateInventoryItem(currentItem.id, {
+                currentStock: newTotalStock,
+                unitCost: Number(newUnitCost.toFixed(2)),
+                lastRestocked: new Date().toISOString()
+              });
+            }
+          }
+        }
+      }
 
       const newTransaction = {
         id: data.id,
@@ -668,6 +729,8 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         costCenterId: data.cost_center_id,
         amount: Number(data.amount),
         type: data.type,
+        receiptUrl: data.receipt_url,
+        items: finalItems,
         createdAt: data.created_at,
       };
 

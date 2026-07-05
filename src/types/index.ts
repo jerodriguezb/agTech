@@ -184,6 +184,22 @@ export interface Activity {
   createdAt: ISOString;
 }
 
+export interface ParsedInvoiceItem {
+  inventoryItemId: string | null;
+  originalName: string;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+}
+
+export interface ParsedInvoice {
+  date: string;
+  provider: string;
+  totalAmount: number;
+  items: ParsedInvoiceItem[];
+  receiptUrl?: string | null; // Guardamos la URL local o remota de la foto
+}
+
 /**
  * PendingActivity — Estructura temporal para la confirmación desde el chat
  */
@@ -200,6 +216,7 @@ export interface PendingActivity {
   serviceCostPerHa?: number;
   inputsAsked?: boolean;
   paddockOptions?: string[];
+  parsedInvoice?: ParsedInvoice; // Usado cuando type === 'INVOICE_CONFIRMATION'
 }
 
 // ============================================================================
@@ -258,6 +275,16 @@ export interface CostCenter {
   createdAt: ISOString;
 }
 
+export interface TransactionItem {
+  id: ID;
+  transactionId: ID;
+  inventoryItemId?: ID | null;
+  description?: string;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+}
+
 export interface FinancialTransaction {
   id: ID;
   farmId: ID;
@@ -267,6 +294,8 @@ export interface FinancialTransaction {
   costCenterId?: ID | null;
   amount: number;
   type: TransactionType;
+  receiptUrl?: string | null;
+  items?: TransactionItem[];
   createdAt: ISOString;
 }
 

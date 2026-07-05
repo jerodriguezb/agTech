@@ -43,7 +43,8 @@ function buildSystemPrompt(
   paddocks: Paddock[],
   inventory: InventoryItem[],
   crops: Crop[],
-  customPrompt: string | null = null
+  customPrompt: string | null = null,
+  partialAction: PendingActivity | null = null
 ): string {
   // Construir lista de lotes con info del cultivo
   const paddockList = paddocks.map(p => {
@@ -81,6 +82,11 @@ ${paddockList || '  (No hay lotes cargados)'}
 
 ## INSUMOS EN INVENTARIO (PAÑOL)
 ${inventoryList || '  (No hay insumos cargados)'}
+
+## ESTADO ACTUAL DEL BORRADOR (MEMORIA)
+Si estás en medio de una charla recopilando datos de una labor, este es el borrador actual con los datos que ya sabemos:
+${partialAction ? JSON.stringify(partialAction, null, 2) : '(No hay ningún borrador activo actualmente. Si el usuario te pide registrar algo, empezá a armarlo desde cero).'}
+=> REGLA DE ORO: Si hay un borrador activo, debés **MANTENER y COMBINAR** esos datos con lo nuevo que te diga el usuario. Por ejemplo, si en el borrador ya dice que la labor es "Siembra" en "Lote Norte", y el usuario te dice "use 20 litros de gasoil", tu nuevo objeto \`activity\` debe incluir "Siembra", "Lote Norte" y ahora sumar los 20 litros de gasoil. NO borres ni olvides lo que ya está en la memoria.
 
 ## REGLAS DE NEGOCIO ESTRICTAS (HUMANIZADAS)
 
@@ -257,16 +263,18 @@ export async function processWithGemini(
   pendingAction?: PendingActivity;
   nextPartialAction?: PendingActivity | null;
 }> {
-  // Si Gemini no está configurado, usar fallback regex
   if (!isGeminiConfigured || !genAI) {
-    console.warn('[agroCopilot] Gemini no configurado, usando motor NLP regex.');
-    return processNaturalLanguage(userMessage, paddocks, inventory, partialAction);
+    return {
+      success: false,
+      message: '⚠️ La Inteligencia Artificial no está configurada. Por favor, agregá tu API Key de Gemini en los Ajustes.',
+      nextPartialAction: null
+    };
   }
 
   try {
     const customPrompt = useAgriStore.getState().customSystemPrompt;
-    // Construir system prompt con datos actuales de la BD
-    const systemPrompt = buildSystemPrompt(paddocks, inventory, crops, customPrompt);
+    // Construir system prompt con datos actuales de la BD y el borrador actual
+    const systemPrompt = buildSystemPrompt(paddocks, inventory, crops, customPrompt, partialAction);
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
@@ -283,7 +291,7 @@ export async function processWithGemini(
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.3,
-        maxOutputTokens: 1024,
+        maxOutputTokens: 8192,
       },
     });
 
@@ -300,9 +308,21 @@ export async function processWithGemini(
     for (let i = pastMessages.length - 1; i >= 0; i--) {
       const role = pastMessages[i].role === 'user' ? 'user' : 'model';
       if (role === expectedRole) {
+        
+        let textContent = pastMessages[i].content;
+        // Si el rol es model y estamos forzando application/json, el historial del modelo debe ser JSON válido
+        if (role === 'model') {
+           textContent = JSON.stringify({
+             message: pastMessages[i].content,
+             intent: 'conversation',
+             ready_to_confirm: false,
+             activity: null
+           });
+        }
+
         geminiHistory.unshift({
           role: role as 'user' | 'model',
-          parts: [{ text: pastMessages[i].content }],
+          parts: [{ text: textContent }],
         });
         expectedRole = expectedRole === 'model' ? 'user' : 'model';
       }
@@ -348,10 +368,86 @@ export async function processWithGemini(
   } catch (error: any) {
     console.error('[agroCopilot] Error con Gemini:', error);
     
+    // Fallback: Si Gemini falla (ej. JSON mal formado o red), retornamos mensaje seguro
     return {
-      action: 'chat',
-      message: `⚠️ **Error en IA (Gemini):** ${error?.message || 'Error desconocido'}`,
-      confidence: 1,
+      success: false,
+      message: `⚠️ **Oops:** Hubo un pequeño corte en la comunicación con la IA (${error?.message?.split('\\n')[0] || 'Error desconocido'}). ¿Podés repetirlo?`,
+      nextPartialAction: null
     };
+  }
+}
+
+import { ParsedInvoice, ParsedInvoiceItem } from '../types';
+
+// ─── OCR de Facturas (Módulo Compras) ──────────────────────────────────────────
+
+export async function parseInvoiceImage(
+  base64Image: string,
+  mimeType: string,
+  inventory: InventoryItem[]
+): Promise<ParsedInvoice> {
+  if (!genAI) {
+    throw new Error('Gemini no está configurado.');
+  }
+
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-2.5-flash',
+    generationConfig: {
+      temperature: 0.1, // Baja temperatura para OCR estricto
+      responseMimeType: 'application/json',
+    },
+  });
+
+  const inventoryContext = inventory.map(i => `- ID: "${i.id}" | Nombre: "${i.name}"`).join('\n');
+
+  const prompt = `
+Actúa como un OCR experto en facturas y remitos agropecuarios.
+Analiza la imagen adjunta y extrae los datos de la compra.
+Devuelve ÚNICAMENTE un objeto JSON con la siguiente estructura exacta:
+{
+  "date": "YYYY-MM-DD",
+  "provider": "Nombre del proveedor o comercio",
+  "totalAmount": 1500.50, // Número total de la factura
+  "items": [
+    {
+      "inventoryItemId": "ID_DEL_INSUMO_O_NULL",
+      "originalName": "Nombre original en la factura",
+      "quantity": 10.5,
+      "unitPrice": 100.0,
+      "subtotal": 1050.0
+    }
+  ]
+}
+
+Reglas:
+1. Las fechas deben estar en formato YYYY-MM-DD. Si no hay fecha, usa la fecha de hoy.
+2. Para "inventoryItemId", intenta hacer coincidir (fuzzy match) el nombre original de la factura con la siguiente lista de insumos de mi pañol. Si estás MUY seguro de que coinciden (ej. "Glifo 48%" y "Glifosato"), pon el ID exacto. Si no coincide con nada, pon null.
+Lista de insumos en mi pañol:
+${inventoryContext || '(Lista vacía)'}
+3. Extrae la cantidad, precio unitario y subtotal numéricamente. Si la imagen no tiene precio unitario, calcúlalo como subtotal / quantity.
+`;
+
+  try {
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: base64Image,
+          mimeType: mimeType
+        }
+      }
+    ]);
+
+    const responseText = result.response.text();
+    const cleanJson = responseText
+        .replace(/```json\s*/g, '')
+        .replace(/```\s*/g, '')
+        .trim();
+        
+    const parsed: ParsedInvoice = JSON.parse(cleanJson);
+    return parsed;
+  } catch (err: any) {
+    console.error('[parseInvoiceImage] Error parsing invoice:', err);
+    throw err;
   }
 }
