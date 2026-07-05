@@ -181,6 +181,7 @@ export default function WhatsAppCopilot() {
   const user = useAgriStore((s) => s.user);
   const setAuthModalOpen = useAgriStore((s) => s.setAuthModalOpen);
   const setPartialAction = useAgriStore((s) => s.setPartialAction);
+  const clearChatMessages = useAgriStore((s) => s.clearChatMessages);
 
   const [inputValue, setInputValue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -504,6 +505,17 @@ export default function WhatsAppCopilot() {
               Asistente Agrícola Inteligente
             </p>
           </div>
+          <button
+            onClick={() => {
+              if (window.confirm('¿Estás seguro de que querés borrar la conversación y empezar de cero?')) {
+                clearChatMessages();
+              }
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"
+            title="Nueva Conversación (Borrar chat)"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="flex h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"

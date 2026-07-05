@@ -354,6 +354,7 @@ export interface AgriActions {
   setUser: (user: any | null) => void;
   setAuthModalOpen: (isOpen: boolean) => void;
   setPartialAction: (action: PendingActivity | null) => void;
+  clearChatMessages: () => void;
 
   // Modificadores de UI
   setCurrentFarm: (id: ID) => void;

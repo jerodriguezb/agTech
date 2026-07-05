@@ -472,7 +472,12 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
     set({ partialAction: action });
   },
 
-  // ─── Mutaciones de Negocio ─────────────────────────────────────────
+  clearChatMessages: () => {
+    set({ chatMessages: [welcomeMessage], partialAction: null });
+    saveToLocalStorage('agrocopilot_chat', [welcomeMessage]);
+  },
+
+  // ─── Lógica de Dominio Centralizada ─────────────────────────────────────────
 
   addActivity: async (activityData: Omit<Activity, 'id' | 'createdAt'>) => {
     const state = get();

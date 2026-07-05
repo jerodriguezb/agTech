@@ -83,11 +83,6 @@ ${paddockList || '  (No hay lotes cargados)'}
 ## INSUMOS EN INVENTARIO (PAÑOL)
 ${inventoryList || '  (No hay insumos cargados)'}
 
-## ESTADO ACTUAL DEL BORRADOR (MEMORIA)
-Si estás en medio de una charla recopilando datos de una labor, este es el borrador actual con los datos que ya sabemos:
-${partialAction ? JSON.stringify(partialAction, null, 2) : '(No hay ningún borrador activo actualmente. Si el usuario te pide registrar algo, empezá a armarlo desde cero).'}
-=> REGLA DE ORO: Si hay un borrador activo, debés **MANTENER y COMBINAR** esos datos con lo nuevo que te diga el usuario. Por ejemplo, si en el borrador ya dice que la labor es "Siembra" en "Lote Norte", y el usuario te dice "use 20 litros de gasoil", tu nuevo objeto \`activity\` debe incluir "Siembra", "Lote Norte" y ahora sumar los 20 litros de gasoil. NO borres ni olvides lo que ya está en la memoria.
-
 ## REGLAS DE NEGOCIO ESTRICTAS (HUMANIZADAS)
 
 1. **Validación de Lotes (Paddocks):**
@@ -146,7 +141,14 @@ ${top10WithStock || '- (No hay insumos con stock actualmente)'}
 - "intent": DEBE ser "register_activity" en el momento que tengas los datos para registrar (aunque falten algunos). NO uses "conversation" cuando estés armando un registro.
 - "ready_to_confirm": true/false. DEBE SER true EXACTAMENTE en el MISMO mensaje en el que le mostrás el resumen al usuario y le preguntás "¿Está todo correcto para confirmar?". Es obligatorio que sea true en ese momento para que el sistema pueda mostrarle los botones de [Sí, confirmar] en la pantalla.
 - "activity" puede ser null si estás en medio de la charla preguntando datos faltantes o conversando.
-- En "inputs", usá los IDs y nombres reales del inventario. Si no se usaron insumos, dejá el array vacío.`;
+- En "inputs", usá los IDs y nombres reales del inventario. Si no se usaron insumos, dejá el array vacío.
+
+${partialAction ? `## CONTEXTO ACTUAL (MEMORIA A CORTO PLAZO)
+Actualmente estás recolectando datos para una actividad y el usuario ya te dio esta información en turnos anteriores:
+\`\`\`json
+${JSON.stringify(partialAction, null, 2)}
+\`\`\`
+=> ¡IMPORTANTE! Recordá y utilizá estos datos. NO le vuelvas a preguntar al usuario cosas que ya están en este JSON (por ejemplo, si ya dice "paddockId" o "type", es porque ya te lo dijo). Solo preguntá lo que falta, o si ya tenés todo (Tipo, Lote, Fecha e insumos si los hay), preguntale si quiere confirmar y marcá "ready_to_confirm": true.` : ''}`;
 }
 
 // ─── Conversión de Respuesta Gemini a formato del Store ──────────────────────
@@ -218,17 +220,16 @@ function geminiResponseToResult(
       ndviValue: act.ndvi_value && act.ndvi_value !== 'null' ? Number(act.ndvi_value) : undefined,
     };
 
-    // Heurística robusta: Si tiene tipo y el mensaje habla de confirmar o registrar, forzamos la bandera
-    const isComplete = !!act.type && (
-      parsed.ready_to_confirm || 
-      /(confirmar|correcto\?|registramos)/i.test(parsed.message)
-    );
+    // Confiamos exclusivamente en el flag de la IA que fue instruida para setearlo en true
+    // solo cuando está pidiendo la confirmación final.
+    const isComplete = !!act.type && parsed.ready_to_confirm;
 
     if (isComplete) {
       return {
         success: true,
         message: parsed.message,
         pendingAction: pendingActivity,
+        nextPartialAction: pendingActivity, // Mantenemos la memoria por si el usuario decide modificar algo en vez de hacer clic
       };
     } else {
       // Gemini necesita más info, mantener como partial
@@ -273,7 +274,7 @@ export async function processWithGemini(
 
   try {
     const customPrompt = useAgriStore.getState().customSystemPrompt;
-    // Construir system prompt con datos actuales de la BD y el borrador actual
+    // Construir system prompt con datos actuales de la BD y memoria a corto plazo
     const systemPrompt = buildSystemPrompt(paddocks, inventory, crops, customPrompt, partialAction);
 
     const model = genAI.getGenerativeModel({
