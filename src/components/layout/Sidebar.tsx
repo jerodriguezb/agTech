@@ -6,6 +6,7 @@ import {
   Warehouse,
   ChevronLeft,
   ChevronRight,
+  Wallet,
 } from 'lucide-react';
 import { useAgriStore } from '../../store/useAgriStore';
 import { cn } from '../../lib/utils';
@@ -23,6 +24,7 @@ const navItems: NavItem[] = [
   { id: 'map', label: 'Cartografía', icon: Map },
   { id: 'tasks', label: 'Tareas de Campo', icon: ClipboardList },
   { id: 'inventory', label: 'Pañol de Insumos', icon: Warehouse },
+  { id: 'expenses', label: 'Finanzas', icon: Wallet },
 ];
 
 export default function Sidebar() {

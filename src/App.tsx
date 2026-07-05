@@ -7,6 +7,7 @@ import DashboardView from './views/DashboardView';
 import MapView from './views/MapView';
 import FieldTasksView from './views/FieldTasksView';
 import InventoryView from './views/InventoryView';
+import { ExpensesView } from './views/ExpensesView';
 import AuthModal from './components/auth/AuthModal';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 
@@ -54,6 +55,8 @@ function App() {
         return <FieldTasksView />;
       case 'inventory':
         return <InventoryView />;
+      case 'expenses':
+        return <ExpensesView />;
       default:
         return <DashboardView />;
     }

@@ -14,6 +14,9 @@ import {
   Loader2,
   Shield,
   Sprout,
+  Wallet,
+  BookOpen,
+  Target,
 } from 'lucide-react';
 import { useAgriStore } from '../../store/useAgriStore';
 import { cn } from '../../lib/utils';
@@ -25,11 +28,14 @@ const viewMeta: Record<AppView, { label: string; icon: React.ElementType }> = {
   map: { label: 'Cartografía', icon: Map },
   tasks: { label: 'Tareas de Campo', icon: ClipboardList },
   inventory: { label: 'Pañol de Insumos', icon: Warehouse },
+  expenses: { label: 'Finanzas', icon: Wallet },
 };
 
 import PermissionManagerModal from '../settings/PermissionManagerModal';
 import CampaignManagerModal from '../settings/CampaignManagerModal';
 import CropManagerModal from '../settings/CropManagerModal';
+import AccountManagerModal from '../settings/AccountManagerModal';
+import CostCenterManagerModal from '../settings/CostCenterManagerModal';
 
 export default function Topbar() {
   const currentView = useAgriStore((s) => s.currentView);
@@ -47,6 +53,8 @@ export default function Topbar() {
   const [isPermissionsOpen, setIsPermissionsOpen] = useState(false);
   const [isCampaignsOpen, setIsCampaignsOpen] = useState(false);
   const [isCropsOpen, setIsCropsOpen] = useState(false);
+  const [isAccountsOpen, setIsAccountsOpen] = useState(false);
+  const [isCostCentersOpen, setIsCostCentersOpen] = useState(false);
 
   // Supabase states
   const supabaseStatus = useAgriStore((s) => s.supabaseStatus);
@@ -237,6 +245,38 @@ export default function Topbar() {
           </button>
         )}
 
+        {/* Account Manager Trigger Button */}
+        {user && (
+          <button
+            onClick={() => setIsAccountsOpen(true)}
+            className={cn(
+              'relative flex items-center justify-center w-9 h-9 rounded-xl',
+              'text-slate-500 hover:text-slate-700',
+              'hover:bg-slate-100 transition-colors duration-200',
+              'focus:outline-none focus:ring-2 focus:ring-blue-500/30'
+            )}
+            title="Administrar Cuentas Contables"
+          >
+            <BookOpen className="w-[18px] h-[18px] text-blue-600" strokeWidth={2} />
+          </button>
+        )}
+
+        {/* Cost Center Manager Trigger Button */}
+        {user && (
+          <button
+            onClick={() => setIsCostCentersOpen(true)}
+            className={cn(
+              'relative flex items-center justify-center w-9 h-9 rounded-xl',
+              'text-slate-500 hover:text-slate-700',
+              'hover:bg-slate-100 transition-colors duration-200',
+              'focus:outline-none focus:ring-2 focus:ring-orange-500/30'
+            )}
+            title="Administrar Centros de Costo"
+          >
+            <Target className="w-[18px] h-[18px] text-orange-600" strokeWidth={2} />
+          </button>
+        )}
+
         {/* Separator */}
         <div className="w-px h-6 bg-slate-200" />
 
@@ -305,6 +345,12 @@ export default function Topbar() {
       isOpen={isCropsOpen}
       onClose={() => setIsCropsOpen(false)}
     />
+    {isAccountsOpen && (
+      <AccountManagerModal onClose={() => setIsAccountsOpen(false)} />
+    )}
+    {isCostCentersOpen && (
+      <CostCenterManagerModal onClose={() => setIsCostCentersOpen(false)} />
+    )}
   </>
   );
 }

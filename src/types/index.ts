@@ -22,7 +22,7 @@ export type ActivityType =
   | 'Lluvia';
 
 /** Vistas navegables de la aplicación */
-export type AppView = 'dashboard' | 'map' | 'tasks' | 'inventory';
+export type AppView = 'dashboard' | 'map' | 'tasks' | 'inventory' | 'expenses';
 
 // ============================================================================
 // Entidades de Negocio
@@ -233,6 +233,44 @@ export interface ChatMessage {
 }
 
 // ============================================================================
+// Módulo ERP (Costos y Finanzas)
+// ============================================================================
+
+export type AccountType = 'OPEX_DIRECT' | 'OPEX_INDIRECT' | 'CAPEX' | 'REVENUE';
+export type CostCenterType = 'DIRECT' | 'INDIRECT';
+export type TransactionType = 'EXPENSE' | 'INCOME';
+
+export interface ChartOfAccount {
+  id: ID;
+  farmId: ID;
+  code: string;
+  name: string;
+  type: AccountType;
+  createdAt: ISOString;
+}
+
+export interface CostCenter {
+  id: ID;
+  farmId: ID;
+  name: string;
+  type: CostCenterType;
+  paddockId?: ID | null;
+  createdAt: ISOString;
+}
+
+export interface FinancialTransaction {
+  id: ID;
+  farmId: ID;
+  date: ISOString;
+  description: string;
+  accountId: ID;
+  costCenterId?: ID | null;
+  amount: number;
+  type: TransactionType;
+  createdAt: ISOString;
+}
+
+// ============================================================================
 // Interfaz del Store Global
 // ============================================================================
 
@@ -246,6 +284,11 @@ export interface AgriState {
   activities: Activity[];
   staff: StaffMember[];
   activityTypes: FarmActivityType[];
+  
+  // ERP
+  chartOfAccounts: ChartOfAccount[];
+  costCenters: CostCenter[];
+  transactions: FinancialTransaction[];
 
   // Estado de UI y Carga
   currentFarmId: ID;
@@ -289,6 +332,11 @@ export interface AgriActions {
   setCurrentView: (view: AppView) => void;
   toggleSidebar: () => void;
   toggleCopilot: () => void;
+
+  // Finanzas / ERP
+  addTransaction: (transaction: Omit<FinancialTransaction, 'id' | 'createdAt'>) => Promise<void>;
+  addChartOfAccount: (account: Omit<ChartOfAccount, 'id' | 'createdAt' | 'farmId'>) => Promise<void>;
+  addCostCenter: (costCenter: Omit<CostCenter, 'id' | 'createdAt' | 'farmId'>) => Promise<void>;
 
   // Lotes (Paddocks)
   addPaddock: (paddockData: Omit<Paddock, 'id' | 'area' | 'lastUpdated'> & { area?: number }) => Promise<void>;

@@ -49,6 +49,9 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
   activities: [...mockActivities],
   staff: [...mockStaff],
   activityTypes: [...mockActivityTypes],
+  chartOfAccounts: [],
+  costCenters: [],
+  transactions: [],
 
   // ─── Estado de UI y Carga ──────────────────────────────────────────
   currentFarmId: mockFarm.id,
@@ -180,28 +183,36 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       const farmId = activeFarm.id;
 
       // 3. Consultas paralelas para el establecimiento seleccionado
-      const [cropsRes, paddocksRes, inventoryRes, activitiesRes, chatRes, staffRes, typesRes, settingsRes, userRoleRes, farmUsersRes, campaignsRes] =
-        await Promise.all([
-          supabase.from('crops').select('*'),
-          supabase.from('v_paddocks').select('*').eq('farm_id', farmId),
-          supabase.from('inventory_items').select('*').eq('farm_id', farmId),
-          supabase
-            .from('activities')
-            .select('*, activity_inputs(*)')
-            .eq('farm_id', farmId)
-            .order('date', { ascending: false }),
-          supabase
-            .from('chat_messages')
-            .select('*')
-            .eq('farm_id', farmId)
-            .order('created_at', { ascending: true }),
-          supabase.from('staff').select('*').eq('farm_id', farmId),
-          supabase.from('farm_activity_types').select('*').eq('farm_id', farmId),
-          supabase.from('farm_ai_settings').select('*').eq('farm_id', farmId).maybeSingle(),
-          supabase.from('farm_users').select('*').eq('farm_id', farmId).eq('user_id', userId).maybeSingle(),
-          supabase.from('farm_users').select('*').eq('farm_id', farmId),
-          supabase.from('campaigns').select('*').eq('farm_id', farmId),
-        ]);
+      const [
+        cropsRes, paddocksRes, inventoryRes, activitiesRes, 
+        chatRes, staffRes, typesRes, settingsRes, 
+        userRoleRes, farmUsersRes, campaignsRes,
+        chartOfAccountsRes, costCentersRes, transactionsRes
+      ] = await Promise.all([
+        supabase.from('crops').select('*'),
+        supabase.from('v_paddocks').select('*').eq('farm_id', farmId),
+        supabase.from('inventory_items').select('*').eq('farm_id', farmId),
+        supabase
+          .from('activities')
+          .select('*, activity_inputs(*)')
+          .eq('farm_id', farmId)
+          .order('date', { ascending: false }),
+        supabase
+          .from('chat_messages')
+          .select('*')
+          .eq('farm_id', farmId)
+          .order('created_at', { ascending: true }),
+        supabase.from('staff').select('*').eq('farm_id', farmId),
+        supabase.from('farm_activity_types').select('*').eq('farm_id', farmId),
+        supabase.from('farm_ai_settings').select('*').eq('farm_id', farmId).maybeSingle(),
+        supabase.from('farm_users').select('*').eq('farm_id', farmId).eq('user_id', userId).maybeSingle(),
+        supabase.from('farm_users').select('*').eq('farm_id', farmId),
+        supabase.from('campaigns').select('*').eq('farm_id', farmId),
+        // ERP
+        supabase.from('chart_of_accounts').select('*').eq('farm_id', farmId),
+        supabase.from('cost_centers').select('*').eq('farm_id', farmId),
+        supabase.from('financial_transactions').select('*').eq('farm_id', farmId).order('date', { ascending: false }),
+      ]);
 
       if (cropsRes.error) throw cropsRes.error;
       if (paddocksRes.error) throw paddocksRes.error;
@@ -345,6 +356,37 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       }));
       const defaultActiveCampaign = mappedCampaigns.find(c => c.isActive)?.id || null;
 
+      // Mapear ERP
+      const mappedChartOfAccounts = (chartOfAccountsRes.data || []).map((a: any) => ({
+        id: a.id,
+        farmId: a.farm_id,
+        code: a.code,
+        name: a.name,
+        type: a.type,
+        createdAt: a.created_at,
+      }));
+
+      const mappedCostCenters = (costCentersRes.data || []).map((cc: any) => ({
+        id: cc.id,
+        farmId: cc.farm_id,
+        name: cc.name,
+        type: cc.type,
+        paddockId: cc.paddock_id,
+        createdAt: cc.created_at,
+      }));
+
+      const mappedTransactions = (transactionsRes.data || []).map((t: any) => ({
+        id: t.id,
+        farmId: t.farm_id,
+        date: t.date,
+        description: t.description,
+        accountId: t.account_id,
+        costCenterId: t.cost_center_id,
+        amount: Number(t.amount),
+        type: t.type,
+        createdAt: t.created_at,
+      }));
+
       set({
         farms: mappedFarms,
         campaigns: mappedCampaigns,
@@ -354,6 +396,9 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         activities: mappedActivities,
         staff: mappedStaff.length > 0 ? mappedStaff : mockStaff,
         activityTypes: mappedTypes.length > 0 ? mappedTypes : mockActivityTypes,
+        chartOfAccounts: mappedChartOfAccounts,
+        costCenters: mappedCostCenters,
+        transactions: mappedTransactions,
         chatMessages: mappedChat.length > 0 ? mappedChat : [welcomeMessage],
         currentFarmId: farmId,
         activeCampaignId: defaultActiveCampaign,
@@ -580,6 +625,105 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
     } catch (err) {
       console.error('[addActivity] ❌ Error al registrar actividad en Supabase:', err);
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      throw err;
+    }
+  },
+
+  addTransaction: async (transactionData) => {
+    const state = get();
+    if (state.supabaseStatus !== 'connected' || !supabase) {
+      // Local fallback
+      const newTransaction = {
+        ...transactionData,
+        id: generateId(),
+        createdAt: new Date().toISOString(),
+      };
+      set((s) => ({ transactions: [newTransaction, ...s.transactions] }));
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('financial_transactions')
+        .insert([{
+          farm_id: state.currentFarmId,
+          date: transactionData.date,
+          description: transactionData.description,
+          account_id: transactionData.accountId,
+          cost_center_id: transactionData.costCenterId || null,
+          amount: transactionData.amount,
+          type: transactionData.type,
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      const newTransaction = {
+        id: data.id,
+        farmId: data.farm_id,
+        date: data.date,
+        description: data.description,
+        accountId: data.account_id,
+        costCenterId: data.cost_center_id,
+        amount: Number(data.amount),
+        type: data.type,
+        createdAt: data.created_at,
+      };
+
+      set((s) => ({ transactions: [newTransaction, ...s.transactions] }));
+    } catch (err) {
+      console.error('Error adding transaction:', err);
+      throw err;
+    }
+  },
+
+  addChartOfAccount: async (accountData) => {
+    const state = get();
+    if (state.supabaseStatus !== 'connected' || !supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from('chart_of_accounts')
+        .insert([{ farm_id: state.currentFarmId, ...accountData }])
+        .select()
+        .single();
+      if (error) throw error;
+      const newAccount = {
+        id: data.id,
+        farmId: data.farm_id,
+        code: data.code,
+        name: data.name,
+        type: data.type,
+        createdAt: data.created_at,
+      };
+      set((s) => ({ chartOfAccounts: [...s.chartOfAccounts, newAccount] }));
+    } catch (err) {
+      console.error('Error adding account:', err);
+      throw err;
+    }
+  },
+
+  addCostCenter: async (costCenterData) => {
+    const state = get();
+    if (state.supabaseStatus !== 'connected' || !supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from('cost_centers')
+        .insert([{ farm_id: state.currentFarmId, ...costCenterData }])
+        .select()
+        .single();
+      if (error) throw error;
+      const newCenter = {
+        id: data.id,
+        farmId: data.farm_id,
+        name: data.name,
+        type: data.type,
+        paddockId: data.paddock_id,
+        createdAt: data.created_at,
+      };
+      set((s) => ({ costCenters: [...s.costCenters, newCenter] }));
+    } catch (err) {
+      console.error('Error adding cost center:', err);
       throw err;
     }
   },
