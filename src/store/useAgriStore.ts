@@ -187,7 +187,8 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         cropsRes, paddocksRes, inventoryRes, activitiesRes, 
         chatRes, staffRes, typesRes, settingsRes, 
         userRoleRes, farmUsersRes, campaignsRes,
-        chartOfAccountsRes, costCentersRes, transactionsRes
+        chartOfAccountsRes, costCentersRes, transactionsRes,
+        storageLocationsRes, grainStocksRes, salesOrdersRes, salesPaymentsRes
       ] = await Promise.all([
         supabase.from('crops').select('*'),
         supabase.from('v_paddocks').select('*').eq('farm_id', farmId),
@@ -212,6 +213,10 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         supabase.from('chart_of_accounts').select('*').eq('farm_id', farmId),
         supabase.from('cost_centers').select('*').eq('farm_id', farmId),
         supabase.from('financial_transactions').select('*').eq('farm_id', farmId).order('date', { ascending: false }),
+        supabase.from('storage_locations').select('*').eq('farm_id', farmId),
+        supabase.from('grain_stocks').select('*').eq('farm_id', farmId),
+        supabase.from('sales_orders').select('*').eq('farm_id', farmId).order('date', { ascending: false }),
+        supabase.from('sales_payments').select('*, sales_orders!inner(farm_id)').eq('sales_orders.farm_id', farmId),
       ]);
 
       if (cropsRes.error) throw cropsRes.error;
@@ -387,6 +392,52 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         createdAt: t.created_at,
       }));
 
+      // Mapear Comercialización
+      const mappedStorageLocations = (storageLocationsRes.data || []).map((s: any) => ({
+        id: s.id,
+        farmId: s.farm_id,
+        name: s.name,
+        type: s.type,
+        capacityTons: s.capacity_tons ? Number(s.capacity_tons) : undefined,
+        createdAt: s.created_at,
+      }));
+
+      const mappedGrainStocks = (grainStocksRes.data || []).map((g: any) => ({
+        id: g.id,
+        farmId: g.farm_id,
+        storageLocationId: g.storage_location_id,
+        cropId: g.crop_id,
+        currentTons: Number(g.current_tons),
+        updatedAt: g.updated_at,
+      }));
+
+      const mappedSalesOrders = (salesOrdersRes.data || []).map((o: any) => ({
+        id: o.id,
+        farmId: o.farm_id,
+        date: o.date,
+        cropId: o.crop_id,
+        storageLocationId: o.storage_location_id,
+        tonsSold: Number(o.tons_sold),
+        unitPrice: Number(o.unit_price),
+        subtotal: Number(o.subtotal),
+        taxPercentage: Number(o.tax_percentage),
+        freightDeduction: Number(o.freight_deduction),
+        netTotal: Number(o.net_total),
+        status: o.status,
+        createdAt: o.created_at,
+      }));
+
+      const mappedSalesPayments = (salesPaymentsRes.data || []).map((p: any) => ({
+        id: p.id,
+        salesOrderId: p.sales_order_id,
+        paymentMethod: p.payment_method,
+        amount: Number(p.amount),
+        referenceNumber: p.reference_number,
+        dueDate: p.due_date,
+        perceptionsAmount: Number(p.perceptions_amount),
+        createdAt: p.created_at,
+      }));
+
       set({
         farms: mappedFarms,
         campaigns: mappedCampaigns,
@@ -399,6 +450,10 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         chartOfAccounts: mappedChartOfAccounts,
         costCenters: mappedCostCenters,
         transactions: mappedTransactions,
+        storageLocations: mappedStorageLocations,
+        grainStocks: mappedGrainStocks,
+        salesOrders: mappedSalesOrders,
+        salesPayments: mappedSalesPayments,
         chatMessages: mappedChat.length > 0 ? mappedChat : [welcomeMessage],
         currentFarmId: farmId,
         activeCampaignId: defaultActiveCampaign,
@@ -672,6 +727,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         const itemsPayload = transactionData.items.map(item => ({
           transaction_id: data.id,
           inventory_item_id: item.inventoryItemId || null,
+          crop_id: item.cropId || null,
           description: item.description,
           quantity: item.quantity,
           unit_price: item.unitPrice,
@@ -689,6 +745,7 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           id: item.id,
           transactionId: item.transaction_id,
           inventoryItemId: item.inventory_item_id,
+          cropId: item.crop_id,
           description: item.description,
           quantity: Number(item.quantity),
           unitPrice: Number(item.unit_price),
@@ -792,6 +849,205 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
       set((s) => ({ costCenters: [...s.costCenters, newCenter] }));
     } catch (err) {
       console.error('Error adding cost center:', err);
+      throw err;
+    }
+  },
+
+  // ============================================================================
+  // Comercialización
+  // ============================================================================
+
+  addStorageLocation: async (locationData) => {
+    const state = get();
+    if (state.supabaseStatus !== 'connected' || !supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from('storage_locations')
+        .insert([{ 
+          farm_id: state.currentFarmId, 
+          name: locationData.name,
+          type: locationData.type,
+          capacity_tons: locationData.capacityTons
+        }])
+        .select()
+        .single();
+      if (error) throw error;
+      const newLoc = {
+        id: data.id,
+        farmId: data.farm_id,
+        name: data.name,
+        type: data.type,
+        capacityTons: data.capacity_tons ? Number(data.capacity_tons) : undefined,
+        createdAt: data.created_at,
+      };
+      set((s) => ({ storageLocations: [...s.storageLocations, newLoc] }));
+    } catch (err) {
+      console.error('Error adding storage location:', err);
+      throw err;
+    }
+  },
+
+  updateGrainStock: async (storageLocationId, cropId, tonsDelta) => {
+    const state = get();
+    if (state.supabaseStatus !== 'connected' || !supabase) return;
+    try {
+      const existingStock = state.grainStocks.find(s => s.storageLocationId === storageLocationId && s.cropId === cropId);
+      let newTons = tonsDelta;
+      
+      if (existingStock) {
+        newTons = existingStock.currentTons + tonsDelta;
+        
+        const { data, error } = await supabase
+          .from('grain_stocks')
+          .update({ current_tons: newTons, updated_at: new Date().toISOString() })
+          .eq('id', existingStock.id)
+          .select()
+          .single();
+          
+        if (error) throw error;
+        
+        set(s => ({
+          grainStocks: s.grainStocks.map(stock => stock.id === existingStock.id ? { ...stock, currentTons: Number(data.current_tons), updatedAt: data.updated_at } : stock)
+        }));
+      } else {
+        const { data, error } = await supabase
+          .from('grain_stocks')
+          .insert([{ 
+            farm_id: state.currentFarmId, 
+            storage_location_id: storageLocationId,
+            crop_id: cropId,
+            current_tons: newTons
+          }])
+          .select()
+          .single();
+          
+        if (error) throw error;
+        
+        set(s => ({
+          grainStocks: [...s.grainStocks, {
+            id: data.id,
+            farmId: data.farm_id,
+            storageLocationId: data.storage_location_id,
+            cropId: data.crop_id,
+            currentTons: Number(data.current_tons),
+            updatedAt: data.updated_at
+          }]
+        }));
+      }
+    } catch (err) {
+      console.error('Error updating grain stock:', err);
+      throw err;
+    }
+  },
+
+  addSalesOrder: async (orderData, paymentsData) => {
+    const state = get();
+    if (state.supabaseStatus !== 'connected' || !supabase) return;
+    try {
+      // 1. Crear Orden de Venta
+      const { data: orderResp, error: orderErr } = await supabase
+        .from('sales_orders')
+        .insert([{
+          farm_id: state.currentFarmId,
+          date: orderData.date,
+          crop_id: orderData.cropId,
+          storage_location_id: orderData.storageLocationId,
+          tons_sold: orderData.tonsSold,
+          unit_price: orderData.unitPrice,
+          subtotal: orderData.subtotal,
+          tax_percentage: orderData.taxPercentage,
+          freight_deduction: orderData.freightDeduction,
+          net_total: orderData.netTotal,
+          status: 'PENDING'
+        }])
+        .select()
+        .single();
+        
+      if (orderErr) throw orderErr;
+
+      // 2. Insertar Pagos
+      let finalPayments: any[] = [];
+      if (paymentsData && paymentsData.length > 0) {
+        const paymentsPayload = paymentsData.map(p => ({
+          sales_order_id: orderResp.id,
+          payment_method: p.paymentMethod,
+          amount: p.amount,
+          reference_number: p.referenceNumber || null,
+          due_date: p.dueDate || null,
+          perceptions_amount: p.perceptionsAmount
+        }));
+
+        const { data: payResp, error: payErr } = await supabase
+          .from('sales_payments')
+          .insert(paymentsPayload)
+          .select();
+          
+        if (payErr) throw payErr;
+        finalPayments = payResp;
+      }
+
+      // 3. Descontar Stock
+      if (orderData.storageLocationId) {
+        await get().updateGrainStock(orderData.storageLocationId, orderData.cropId, -orderData.tonsSold);
+      }
+
+      // 4. Agregar Transacción de Ingreso (REVENUE)
+      const revenueAccount = state.chartOfAccounts.find(a => a.type === 'REVENUE');
+      if (revenueAccount) {
+        await get().addTransaction({
+          date: orderData.date,
+          description: `Venta de Granos (Liq. #${orderResp.id.substring(0, 8)})`,
+          accountId: revenueAccount.id,
+          costCenterId: null,
+          amount: orderData.netTotal,
+          type: 'INCOME',
+          items: [{
+            id: Math.random().toString(36).substring(2),
+            transactionId: '',
+            cropId: orderData.cropId,
+            description: 'Kilogramos Liquidados',
+            quantity: orderData.tonsSold,
+            unitPrice: orderData.unitPrice,
+            subtotal: orderData.subtotal,
+          }]
+        });
+      }
+
+      // Actualizar estado local
+      const newOrder = {
+        id: orderResp.id,
+        farmId: orderResp.farm_id,
+        date: orderResp.date,
+        cropId: orderResp.crop_id,
+        storageLocationId: orderResp.storage_location_id,
+        tonsSold: Number(orderResp.tons_sold),
+        unitPrice: Number(orderResp.unit_price),
+        subtotal: Number(orderResp.subtotal),
+        taxPercentage: Number(orderResp.tax_percentage),
+        freightDeduction: Number(orderResp.freight_deduction),
+        netTotal: Number(orderResp.net_total),
+        status: orderResp.status,
+        createdAt: orderResp.created_at,
+      };
+
+      const mappedPayments = finalPayments.map(p => ({
+        id: p.id,
+        salesOrderId: p.sales_order_id,
+        paymentMethod: p.payment_method,
+        amount: Number(p.amount),
+        referenceNumber: p.reference_number,
+        dueDate: p.due_date,
+        perceptionsAmount: Number(p.perceptions_amount),
+        createdAt: p.created_at,
+      }));
+
+      set((s) => ({ 
+        salesOrders: [newOrder, ...s.salesOrders],
+        salesPayments: [...mappedPayments, ...s.salesPayments]
+      }));
+
+    } catch (err) {
+      console.error('Error adding sales order:', err);
       throw err;
     }
   },

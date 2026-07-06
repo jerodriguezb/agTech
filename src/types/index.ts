@@ -22,7 +22,7 @@ export type ActivityType =
   | 'Lluvia';
 
 /** Vistas navegables de la aplicación */
-export type AppView = 'dashboard' | 'map' | 'tasks' | 'inventory' | 'expenses';
+export type AppView = 'dashboard' | 'map' | 'tasks' | 'inventory' | 'expenses' | 'commercial';
 
 // ============================================================================
 // Entidades de Negocio
@@ -146,6 +146,56 @@ export interface Campaign {
   startDate: ISOString;
   endDate: ISOString;
   isActive: boolean;
+  createdAt: ISOString;
+}
+
+// ============================================================================
+// Comercialización y Acopio
+// ============================================================================
+
+export interface StorageLocation {
+  id: ID;
+  farmId: ID;
+  name: string;
+  type: 'SILO' | 'BAG' | 'EXTERNAL';
+  capacityTons?: number;
+  createdAt: ISOString;
+}
+
+export interface GrainStock {
+  id: ID;
+  farmId: ID;
+  storageLocationId: ID;
+  cropId: ID;
+  currentTons: number;
+  updatedAt: ISOString;
+}
+
+export interface SalesOrder {
+  id: ID;
+  farmId: ID;
+  date: ISOString;
+  cropId: ID;
+  storageLocationId: ID | null;
+  tonsSold: number;
+  unitPrice: number;
+  subtotal: number;
+  taxPercentage: number;
+  freightDeduction: number;
+  netTotal: number;
+  status: 'PENDING' | 'PAID';
+  createdAt: ISOString;
+}
+
+export interface SalesPayment {
+  id: ID;
+  salesOrderId: ID;
+  paymentMethod: 'ECHEQ' | 'PHYSICAL_CHEQUE' | 'TRANSFER';
+  amount: number;
+  referenceNumber?: string;
+  dueDate?: ISOString;
+  perceptionsAmount: number;
+  createdAt: ISOString;
 }
 
 /**
@@ -279,6 +329,7 @@ export interface TransactionItem {
   id: ID;
   transactionId: ID;
   inventoryItemId?: ID | null;
+  cropId?: ID | null; // Agregado para ventas de cosecha
   description?: string;
   quantity: number;
   unitPrice: number;
@@ -318,6 +369,12 @@ export interface AgriState {
   chartOfAccounts: ChartOfAccount[];
   costCenters: CostCenter[];
   transactions: FinancialTransaction[];
+
+  // Data: Comercialización
+  storageLocations: StorageLocation[];
+  grainStocks: GrainStock[];
+  salesOrders: SalesOrder[];
+  salesPayments: SalesPayment[];
 
   // Estado de UI y Carga
   currentFarmId: ID;
@@ -364,9 +421,14 @@ export interface AgriActions {
   toggleCopilot: () => void;
 
   // Finanzas / ERP
-  addTransaction: (transaction: Omit<FinancialTransaction, 'id' | 'createdAt'>) => Promise<void>;
+  addTransaction: (transaction: Omit<FinancialTransaction, 'id' | 'farmId' | 'createdAt'>) => Promise<void>;
   addChartOfAccount: (account: Omit<ChartOfAccount, 'id' | 'createdAt' | 'farmId'>) => Promise<void>;
   addCostCenter: (costCenter: Omit<CostCenter, 'id' | 'createdAt' | 'farmId'>) => Promise<void>;
+
+  // Acciones Comercialización
+  addStorageLocation: (location: Omit<StorageLocation, 'id' | 'farmId' | 'createdAt'>) => Promise<void>;
+  updateGrainStock: (storageLocationId: string, cropId: string, tonsDelta: number) => Promise<void>;
+  addSalesOrder: (order: Omit<SalesOrder, 'id' | 'farmId' | 'createdAt' | 'status'>, payments: Omit<SalesPayment, 'id' | 'salesOrderId' | 'createdAt'>[]) => Promise<void>;
 
   // Lotes (Paddocks)
   addPaddock: (paddockData: Omit<Paddock, 'id' | 'area' | 'lastUpdated'> & { area?: number }) => Promise<void>;

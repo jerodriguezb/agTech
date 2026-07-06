@@ -17,6 +17,7 @@ import {
   Wallet,
   BookOpen,
   Target,
+  TrendingUp,
 } from 'lucide-react';
 import { useAgriStore } from '../../store/useAgriStore';
 import { cn } from '../../lib/utils';
@@ -29,6 +30,7 @@ const viewMeta: Record<AppView, { label: string; icon: React.ElementType }> = {
   tasks: { label: 'Tareas de Campo', icon: ClipboardList },
   inventory: { label: 'Pañol de Insumos', icon: Warehouse },
   expenses: { label: 'Finanzas', icon: Wallet },
+  commercial: { label: 'Comercialización', icon: TrendingUp },
 };
 
 import PermissionManagerModal from '../settings/PermissionManagerModal';

@@ -8,6 +8,7 @@ import MapView from './views/MapView';
 import FieldTasksView from './views/FieldTasksView';
 import InventoryView from './views/InventoryView';
 import { ExpensesView } from './views/ExpensesView';
+import { CommercialView } from './views/CommercialView';
 import AuthModal from './components/auth/AuthModal';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 
@@ -57,6 +58,8 @@ function App() {
         return <InventoryView />;
       case 'expenses':
         return <ExpensesView />;
+      case 'commercial':
+        return <CommercialView />;
       default:
         return <DashboardView />;
     }

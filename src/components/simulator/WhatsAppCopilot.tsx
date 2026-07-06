@@ -260,6 +260,38 @@ export default function WhatsAppCopilot() {
       } catch (error: any) {
         addChatMessage({ role: 'assistant', content: `❌ **Error al registrar factura:** ${error?.message || JSON.stringify(error)}` });
       }
+    } else if (action.type === 'SALE_CONFIRMATION') {
+      try {
+        const state = useAgriStore.getState();
+        const revenueAccount = state.chartOfAccounts.find(a => a.type === 'REVENUE');
+        
+        if (!revenueAccount) {
+           throw new Error("No existe una cuenta contable de tipo Ingreso (REVENUE) configurada.");
+        }
+
+        await addTransaction({
+          date: action.date.includes('T') ? action.date : `${action.date}T${new Date().toISOString().split('T')[1]}`,
+          description: `Venta de Cosecha${action.cropId ? '' : ' (General)'}`,
+          accountId: revenueAccount.id,
+          costCenterId: null, // Los ingresos generales o de cosecha no suelen ir a un centro de costo directo, o al menos el ERP básico lo maneja así.
+          amount: (action.appliedArea || 0) * (action.serviceCostPerHa || 0), // tons * price
+          type: 'INCOME',
+          items: [{
+            id: Math.random().toString(36).substring(2),
+            transactionId: '',
+            cropId: action.cropId || null,
+            description: 'Toneladas vendidas',
+            quantity: action.appliedArea || 0,
+            unitPrice: action.serviceCostPerHa || 0,
+            subtotal: (action.appliedArea || 0) * (action.serviceCostPerHa || 0),
+          }]
+        });
+        
+        addChatMessage({ role: 'assistant', content: `✅ Venta registrada exitosamente. Ingreso contabilizado.` });
+      } catch (error: any) {
+        const errorMsg = error?.message || error?.details || JSON.stringify(error);
+        addChatMessage({ role: 'assistant', content: `❌ **Error al registrar la venta:** ${errorMsg}` });
+      }
     } else {
       try {
         const state = useAgriStore.getState();

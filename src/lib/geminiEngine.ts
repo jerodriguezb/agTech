@@ -18,7 +18,7 @@ if (isGeminiConfigured) {
 
 interface GeminiParsedResponse {
   message: string;
-  intent: 'register_activity' | 'update_ndvi' | 'check_inventory' | 'conversation';
+  intent: 'register_activity' | 'update_ndvi' | 'check_inventory' | 'register_sale' | 'conversation';
   ready_to_confirm: boolean;
   activity?: {
     type: string;
@@ -34,6 +34,11 @@ interface GeminiParsedResponse {
     rainfall_mm?: number;
     ndvi_value?: number;
     notes: string;
+  };
+  sale_details?: {
+    crop_id: string | null;
+    tons: number;
+    price_per_ton: number;
   };
 }
 
@@ -62,6 +67,9 @@ function buildSystemPrompt(
   // Lotes disponibles para listar en caso de error
   const paddockNamesList = paddocks.map(p => `- ${p.name}`).join('\n');
 
+  // Cultivos disponibles
+  const cropList = crops.map(c => `- ${c.name} (ID: ${c.id})`).join('\n');
+
   // Primeros 10 insumos con stock > 0
   const top10WithStock = inventory
     .filter(i => i.currentStock > 0)
@@ -82,6 +90,9 @@ ${paddockList || '  (No hay lotes cargados)'}
 
 ## INSUMOS EN INVENTARIO (PAÑOL)
 ${inventoryList || '  (No hay insumos cargados)'}
+
+## CULTIVOS DISPONIBLES (PARA VENTAS)
+${cropList || '  (No hay cultivos cargados)'}
 
 ## REGLAS DE NEGOCIO ESTRICTAS (HUMANIZADAS)
 
@@ -117,7 +128,7 @@ ${top10WithStock || '- (No hay insumos con stock actualmente)'}
 
 {
   "message": "Tu respuesta en lenguaje natural al usuario (con markdown básico si querés resaltar algo, y usando el tono amigable y humano en español argentino descripto arriba)",
-  "intent": "register_activity | update_ndvi | check_inventory | conversation",
+  "intent": "register_activity | update_ndvi | check_inventory | register_sale | conversation",
   "ready_to_confirm": true/false,
   "activity": {
     "type": "Siembra | Pulverizacion | Fertilizacion | Cosecha | Riego | Lluvia",
@@ -135,12 +146,18 @@ ${top10WithStock || '- (No hay insumos con stock actualmente)'}
     "rainfall_mm": null,
     "ndvi_value": null,
     "notes": "Texto original del usuario"
+  },
+  "sale_details": {
+    "crop_id": "ID del cultivo o null",
+    "tons": 100,
+    "price_per_ton": 350.5
   }
 }
 
-- "intent": DEBE ser "register_activity" en el momento que tengas los datos para registrar (aunque falten algunos). NO uses "conversation" cuando estés armando un registro.
+- "intent": DEBE ser "register_activity" o "register_sale" en el momento que tengas los datos para registrar (aunque falten algunos). NO uses "conversation" cuando estés armando un registro.
 - "ready_to_confirm": true/false. DEBE SER true EXACTAMENTE en el MISMO mensaje en el que le mostrás el resumen al usuario y le preguntás "¿Está todo correcto para confirmar?". Es obligatorio que sea true en ese momento para que el sistema pueda mostrarle los botones de [Sí, confirmar] en la pantalla.
-- "activity" puede ser null si estás en medio de la charla preguntando datos faltantes o conversando.
+- "activity" se usa para labores de campo. Puede ser null si estás en medio de la charla o si es una venta.
+- "sale_details" se usa EXCLUSIVAMENTE cuando "intent" es "register_sale". Puede ser null en otros casos.
 - En "inputs", usá los IDs y nombres reales del inventario. Si no se usaron insumos, dejá el array vacío.
 
 ${partialAction ? `## CONTEXTO ACTUAL (MEMORIA A CORTO PLAZO)
@@ -172,12 +189,43 @@ function geminiResponseToResult(
   }
 
   // Intent: conversation (saludo, ayuda, etc)
-  if (parsed.intent === 'conversation' || !parsed.activity) {
+  if (parsed.intent === 'conversation' || (!parsed.activity && !parsed.sale_details)) {
     return {
       success: false,
       message: parsed.message,
       nextPartialAction: null,
     };
+  }
+
+  // Intent: register_sale
+  if (parsed.intent === 'register_sale' && parsed.sale_details) {
+    const sale = parsed.sale_details;
+    const pendingActivity: PendingActivity = {
+      type: 'SALE_CONFIRMATION',
+      date: new Date().toISOString(),
+      cropId: sale.crop_id === 'null' ? null : sale.crop_id,
+      notes: parsed.message,
+      inputsConsumed: [],
+      appliedArea: sale.tons, // Usamos appliedArea temporalmente para las toneladas
+      serviceCostPerHa: sale.price_per_ton, // Usamos serviceCostPerHa para el precio
+    };
+
+    const isComplete = !!sale.crop_id && sale.tons > 0 && parsed.ready_to_confirm;
+
+    if (isComplete) {
+      return {
+        success: true,
+        message: parsed.message,
+        pendingAction: pendingActivity,
+        nextPartialAction: pendingActivity,
+      };
+    } else {
+      return {
+        success: false,
+        message: parsed.message,
+        nextPartialAction: pendingActivity,
+      };
+    }
   }
 
   // Intent: update_ndvi
