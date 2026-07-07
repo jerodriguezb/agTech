@@ -1,12 +1,19 @@
 import React, { useState } from 'react';
 import { useAgriStore } from '../store/useAgriStore';
-import { Plus, Warehouse, TrendingUp, CheckCircle, Clock } from 'lucide-react';
+import { Plus, Warehouse, TrendingUp, CheckCircle, Clock, ArrowDownToLine } from 'lucide-react';
 import { SalesOrder, SalesPayment, StorageLocation, GrainStock } from '../types';
 
 export const CommercialView: React.FC = () => {
-  const { storageLocations, grainStocks, salesOrders, crops, addSalesOrder, addStorageLocation } = useAgriStore();
+  const { storageLocations, grainStocks, salesOrders, crops, addSalesOrder, addStorageLocation, updateGrainStock } = useAgriStore();
   const [isSalesModalOpen, setIsSalesModalOpen] = useState(false);
   const [isStorageModalOpen, setIsStorageModalOpen] = useState(false);
+  const [isStockEntryModalOpen, setIsStockEntryModalOpen] = useState(false);
+
+  // Stock Entry form state
+  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10));
+  const [entryCropId, setEntryCropId] = useState('');
+  const [entryStorageId, setEntryStorageId] = useState('');
+  const [entryKg, setEntryKg] = useState('');
 
   // Storage form state
   const [storageName, setStorageName] = useState('');
@@ -21,11 +28,6 @@ export const CommercialView: React.FC = () => {
   const [unitPrice, setUnitPrice] = useState('');
   const [taxPercentage, setTaxPercentage] = useState('7');
   const [freightDeduction, setFreightDeduction] = useState('0');
-  
-  // Payments state (simplified for first version)
-  const [paymentMethod, setPaymentMethod] = useState<'ECHEQ' | 'PHYSICAL_CHEQUE' | 'TRANSFER'>('ECHEQ');
-  const [referenceNumber, setReferenceNumber] = useState('');
-  const [perceptionsAmount, setPerceptionsAmount] = useState('0');
 
   // Subtotals
   const subtotal = Number(tonsSold) * Number(unitPrice);
@@ -42,6 +44,26 @@ export const CommercialView: React.FC = () => {
     setIsStorageModalOpen(false);
     setStorageName('');
     setCapacity('');
+  };
+
+  const handleStockEntrySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!entryCropId || !entryStorageId || !entryKg) return;
+    
+    await updateGrainStock(entryStorageId, entryCropId, Number(entryKg));
+    
+    setIsStockEntryModalOpen(false);
+    setEntryKg('');
+    setEntryCropId('');
+    setEntryStorageId('');
+  };
+
+  const openSalesModalForStock = (stock: GrainStock) => {
+    setStorageLocationId(stock.storageLocationId);
+    setCropId(stock.cropId);
+    setTonsSold('');
+    setUnitPrice('');
+    setIsSalesModalOpen(true);
   };
 
   const handleSalesSubmit = async (e: React.FormEvent) => {
@@ -69,14 +91,7 @@ export const CommercialView: React.FC = () => {
       netTotal,
     };
 
-    const paymentData = [{
-      paymentMethod,
-      amount: netTotal - Number(perceptionsAmount),
-      referenceNumber,
-      perceptionsAmount: Number(perceptionsAmount)
-    }];
-
-    await addSalesOrder(orderData, paymentData as any);
+    await addSalesOrder(orderData, []);
     
     setIsSalesModalOpen(false);
     setTonsSold('');
@@ -113,11 +128,11 @@ export const CommercialView: React.FC = () => {
             <span>Nuevo Almacén</span>
           </button>
           <button
-            onClick={() => setIsSalesModalOpen(true)}
+            onClick={() => setIsStockEntryModalOpen(true)}
             className="flex items-center space-x-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-700"
           >
-            <TrendingUp className="h-5 w-5" />
-            <span>Liquidación de Venta</span>
+            <ArrowDownToLine className="h-5 w-5" />
+            <span>Ingresar a Acopio</span>
           </button>
         </div>
       </div>
@@ -167,9 +182,17 @@ export const CommercialView: React.FC = () => {
                     ) : (
                       <ul className="space-y-1">
                         {stocksInLoc.map(stock => (
-                          <li key={stock.id} className="flex justify-between text-sm">
-                            <span className="text-slate-600">{getCropName(stock.cropId)}</span>
-                            <span className="font-medium text-slate-800">{stock.currentTons.toFixed(2)} Kg</span>
+                          <li key={stock.id} className="flex items-center justify-between text-sm py-1 border-b border-slate-100 last:border-0">
+                            <div className="flex flex-col">
+                              <span className="text-slate-600 font-medium">{getCropName(stock.cropId)}</span>
+                              <span className="font-bold text-slate-800">{stock.currentTons.toFixed(2)} Kg</span>
+                            </div>
+                            <button
+                              onClick={() => openSalesModalForStock(stock)}
+                              className="px-2 py-1 bg-white border border-slate-200 rounded text-xs font-medium text-emerald-600 hover:bg-emerald-50 hover:border-emerald-200 transition-colors"
+                            >
+                              Liquidar
+                            </button>
                           </li>
                         ))}
                       </ul>
@@ -259,6 +282,47 @@ export const CommercialView: React.FC = () => {
         </div>
       )}
 
+      {/* Modal Ingreso a Acopio */}
+      {isStockEntryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl my-8">
+            <h2 className="text-xl font-bold text-slate-800 mb-2">Ingreso a Acopio (Estoquear)</h2>
+            <p className="text-sm text-slate-500 mb-4">Registrá el ingreso de granos a un silo, bolsa o cooperativa.</p>
+            <form onSubmit={handleStockEntrySubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Fecha</label>
+                <input required type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Cultivo</label>
+                <select required value={entryCropId} onChange={e => setEntryCropId(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500">
+                  <option value="">Seleccione...</option>
+                  {crops.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Almacén de Destino</label>
+                <select required value={entryStorageId} onChange={e => setEntryStorageId(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500">
+                  <option value="">Seleccione...</option>
+                  {storageLocations.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Cantidad (Kg)</label>
+                <input required type="number" step="0.01" value={entryKg} onChange={e => setEntryKg(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
+              </div>
+              <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100">
+                <button type="button" onClick={() => setIsStockEntryModalOpen(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Cancelar</button>
+                <button type="submit" className="flex items-center space-x-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+                  <ArrowDownToLine className="h-4 w-4" />
+                  <span>Guardar Ingreso</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modal Liquidación Venta */}
       {isSalesModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 overflow-y-auto">
@@ -274,15 +338,15 @@ export const CommercialView: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700">Cultivo</label>
-                  <select required value={cropId} onChange={e => setCropId(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500">
+                  <select disabled required value={cropId} onChange={e => setCropId(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-500">
                     <option value="">Seleccione...</option>
                     {crops.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700">Extraer de Almacén</label>
-                  <select value={storageLocationId} onChange={e => setStorageLocationId(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500">
-                    <option value="">Directo de Campo (Sin Acopio)</option>
+                  <select disabled required value={storageLocationId} onChange={e => setStorageLocationId(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-500">
+                    <option value="">Seleccione...</option>
                     {storageLocations.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
@@ -314,28 +378,6 @@ export const CommercialView: React.FC = () => {
                 <div className="flex justify-between text-sm text-rose-600 mb-3"><span>Flete (Fijo):</span> <span>- {formatCurrency(Number(freightDeduction))}</span></div>
                 <div className="flex justify-between font-bold text-lg text-emerald-900 border-t border-emerald-200 pt-2">
                   <span>Neto a Cobrar:</span> <span>{formatCurrency(netTotal)}</span>
-                </div>
-              </div>
-
-              <div className="border-t border-slate-200 pt-4">
-                <h3 className="font-medium text-slate-800 mb-3">Información de Pago / Cheque</h3>
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700">Método</label>
-                    <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value as any)} className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm">
-                      <option value="ECHEQ">E-Cheq</option>
-                      <option value="PHYSICAL_CHEQUE">Cheque Físico</option>
-                      <option value="TRANSFER">Transferencia</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700">Nº Comprobante / Cheque</label>
-                    <input type="text" value={referenceNumber} onChange={e => setReferenceNumber(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700">Percepciones Bancarias (USD)</label>
-                    <input type="number" step="0.01" value={perceptionsAmount} onChange={e => setPerceptionsAmount(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm" />
-                  </div>
                 </div>
               </div>
 

@@ -727,7 +727,6 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
         const itemsPayload = transactionData.items.map(item => ({
           transaction_id: data.id,
           inventory_item_id: item.inventoryItemId || null,
-          crop_id: item.cropId || null,
           description: item.description,
           quantity: item.quantity,
           unit_price: item.unitPrice,
@@ -745,7 +744,6 @@ export const useAgriStore = create<AgriStore>((set, get) => ({
           id: item.id,
           transactionId: item.transaction_id,
           inventoryItemId: item.inventory_item_id,
-          cropId: item.crop_id,
           description: item.description,
           quantity: Number(item.quantity),
           unitPrice: Number(item.unit_price),
